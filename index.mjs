@@ -235,7 +235,7 @@ export function batches(data) {
 }
 
 export async function run(inputs, event, env, fetcher = fetch) {
-  const arch = createClient(inputs['api-url'], inputs['arch-token'], fetcher);
+  const arch = createClient('https://api.foothill.sh', inputs['arch-token'], fetcher);
   const github = createClient('https://api.github.com', inputs['github-token'], fetcher, true);
   let state = await currentDeployment(arch);
   if (state.repository.toLowerCase() !== env.GITHUB_REPOSITORY.toLowerCase()) {
@@ -277,7 +277,7 @@ export async function run(inputs, event, env, fetcher = fetch) {
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try {
-    const names = ['arch-token', 'api-url', 'github-token', 'deployed-sha', 'deployment-id',
+    const names = ['arch-token', 'github-token', 'deployed-sha', 'deployment-id',
       'deployed-at', 'deployment-order', 'mode'];
     const inputs = Object.fromEntries(names.map(name => [name, process.env['INPUT_' + name.toUpperCase()] || '']));
     for (const name of ['arch-token', 'github-token']) {

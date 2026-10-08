@@ -107,6 +107,11 @@ are not promoted. The workflow can also be dispatched manually to retry promotio
 or initialize the tag. Version tags stay unchanged; do not create a GitHub release
 for the moving `latest` tag itself.
 
+For a backport that should not reach all customers, leave "Set as the latest
+release" unchecked. To roll back, mark the previous stable release as latest in
+GitHub, then manually dispatch `Publish latest`; editing a release does not trigger
+promotion automatically.
+
 GitHub references: [deployment events](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows),
 [token behavior](https://docs.github.com/en/actions/concepts/security/github_token),
 [PR merge identities](https://docs.github.com/en/rest/pulls/pulls).

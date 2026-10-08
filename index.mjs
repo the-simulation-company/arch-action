@@ -27,7 +27,7 @@ export function coordination(body = '') {
 
 export function deploymentInput(inputs, event, env, state) {
   if (inputs.mode && !['deploy', 'refresh'].includes(inputs.mode)) {
-    throw new Error('Mode must be deploy or refresh');
+    throw new Error('Mode must be deploy, refresh or preview');
   }
   if (inputs.mode === 'refresh') {
     if (!state.report_id) throw new Error('Initialize this target with a real deployment first');
@@ -54,6 +54,37 @@ export function deploymentInput(inputs, event, env, state) {
     deployment_id: inputs['deployment-id'], deployed_at: inputs['deployed-at'],
     order: Number(inputs['deployment-order'] || env.GITHUB_RUN_NUMBER),
   };
+}
+
+export function previewInput(inputs, event, env) {
+  const revision = inputs['deployed-sha'] || event.pull_request?.head?.sha;
+  if (!revision || !inputs['preview-url']) {
+    throw new Error('Pass deployed-sha and preview-url for the ready preview');
+  }
+  if (!shaPattern.test(revision)) throw new Error('Invalid preview commit');
+  return {
+    revision, url: inputs['preview-url'],
+    deployment_id: inputs['deployment-id'] || `${env.GITHUB_RUN_ID}:${env.GITHUB_RUN_ATTEMPT}`,
+  };
+}
+
+// A pull_request event names its PR even when the preview serves the merge ref.
+export async function previewPR(github, repository, revision, event) {
+  if (event.pull_request && inRepository(event.pull_request, repository)) return event.pull_request;
+  const open = (await pages(github, `/repos/${repository}/commits/${revision}/pulls`))
+    .filter(pr => pr.state === 'open' && pr.head?.sha === revision && inRepository(pr, repository));
+  if (open.length > 1) throw new Error('More than one open PR serves this preview commit');
+  return open[0] || null;
+}
+
+async function reportPreview(arch, github, inputs, event, env) {
+  const preview = previewInput(inputs, event, env);
+  const pr = await previewPR(github, env.GITHUB_REPOSITORY, preview.revision, event);
+  if (!pr) return null;
+  return arch('/v1/deployments/preview', {
+    repository: env.GITHUB_REPOSITORY, ...preview,
+    pr: {number: pr.number, title: pr.title || '', body: pr.body || ''},
+  });
 }
 
 function member(pr, withBody) {
@@ -237,6 +268,7 @@ export function batches(data) {
 export async function run(inputs, event, env, fetcher = fetch) {
   const arch = createClient(inputs['api-url'], inputs['arch-token'], fetcher);
   const github = createClient('https://api.github.com', inputs['github-token'], fetcher, true);
+  if (inputs.mode === 'preview') return reportPreview(arch, github, inputs, event, env);
   let state = await currentDeployment(arch);
   if (state.repository.toLowerCase() !== env.GITHUB_REPOSITORY.toLowerCase()) {
     throw new Error('The Arch token belongs to a different repository');
@@ -278,7 +310,7 @@ export async function run(inputs, event, env, fetcher = fetch) {
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try {
     const names = ['arch-token', 'api-url', 'github-token', 'deployed-sha', 'deployment-id',
-      'deployed-at', 'deployment-order', 'mode'];
+      'deployed-at', 'deployment-order', 'mode', 'preview-url'];
     const inputs = Object.fromEntries(names.map(name => [name, process.env['INPUT_' + name.toUpperCase()] || '']));
     for (const name of ['arch-token', 'github-token']) {
       if (!inputs[name]) throw new Error(`Missing ${name}`);
@@ -288,8 +320,9 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     if (receipt) {
       console.log(`Arch deployment ${receipt.status}. ${receipt.app_url || receipt.app_path}`);
       if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT,
-        `report-id=${receipt.report_id}\napp-url=${receipt.app_url || receipt.app_path}\n`);
-    } else console.log('Deployment does not match this target; no report sent.');
+        (receipt.report_id ? `report-id=${receipt.report_id}\n` : '')
+        + `app-url=${receipt.app_url || receipt.app_path}\n`);
+    } else console.log('No matching deployment or open PR; no report sent.');
   } catch (error) {
     console.error('Arch reporting failed: ' + error.message);
     process.exitCode = 1;

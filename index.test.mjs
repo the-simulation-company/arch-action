@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {batches, collect, coordination, createClient, currentDeployment, deploymentInput, run} from './index.mjs';
+import {batches, collect, coordination, createClient, currentDeployment, deploymentInput, previewInput, run} from './index.mjs';
 
 const a = 'a'.repeat(40), b = 'b'.repeat(40), c = 'c'.repeat(40);
 const state = {report_id: 'previous', revision: a, repository: 'acme/web', environment: 'staging', prs: [], next_after: null};
@@ -202,4 +202,32 @@ test('batching respects both count and UTF-8 byte size', () => {
   const prs = Array.from({length: 1001}, (_, i) => ({number: i + 1}));
   assert.deepEqual(batches({prs, removed: [], commits: []}).map(p => p.prs.length), [500, 500, 1]);
   assert.throws(() => batches({prs: [{body: 'x'.repeat(900000)}], removed: [], commits: []}), /exceeds batch/);
+});
+
+test('preview reports the event PR without reading or changing the deployed inventory', async () => {
+  const sent = [];
+  const event = {pull_request: {...pr(12, null, 'Private preview description'), head: {sha: c}}};
+  const receipt = await run({...inputs, mode: 'preview', 'deployed-sha': '', 'deployment-id': '',
+    'preview-url': 'https://pr-12.preview.example'}, event, env, async (url, options) => {
+    sent.push([url.href, options.body && JSON.parse(options.body)]);
+    return reply({status: 'accepted', goal_run_id: 'run-1', app_url: 'https://arch.example/run'});
+  });
+  assert.equal(receipt.goal_run_id, 'run-1');
+  assert.deepEqual(sent, [['https://arch.example/v1/deployments/preview', {
+    repository: 'acme/web', revision: c, url: 'https://pr-12.preview.example', deployment_id: '100:1',
+    pr: {number: 12, title: 'Checkout', body: 'Private preview description'},
+  }]]);
+});
+
+test('preview outside a PR event finds the one open PR serving that commit', async () => {
+  const open = {...pr(7, null), state: 'open', head: {sha: c}};
+  const fetcher = pulls => async url => {
+    if (url.pathname === `/repos/acme/web/commits/${c}/pulls`) return reply(pulls);
+    if (url.pathname === '/v1/deployments/preview') return reply({status: 'accepted'});
+    throw Error(url.href);
+  };
+  const previewInputs = {...inputs, mode: 'preview', 'deployed-sha': c, 'preview-url': 'https://p.example'};
+  assert.equal((await run(previewInputs, {}, env, fetcher([open, {...open, number: 8, state: 'closed'}]))).status, 'accepted');
+  assert.equal(await run(previewInputs, {}, env, fetcher([{...open, head: {sha: a}}])), null);
+  assert.throws(() => previewInput({...previewInputs, 'preview-url': ''}, {}, env), /preview-url/);
 });

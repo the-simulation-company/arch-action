@@ -41,6 +41,15 @@ event, not the workflow SHA. Your provider must publish GitHub deployment status
 Events written by a workflow's `GITHUB_TOKEN` do not normally trigger another
 workflow, so call this Action directly from existing deployment jobs.
 
+### PR previews
+
+Add the admin-generated preview step to the `pull_request` workflow that deploys
+each PR's preview, after the preview is ready. It reuses the repository's
+`ARCH_DEPLOYMENT_TOKEN`. Map `deployed-sha` to the commit the preview serves and
+`preview-url` to its URL, which must be one of the app's allowed origins. Arch runs
+QA for that PR against the preview. A preview never changes what Arch records as
+deployed for the target, and each push (a new `deployment-id`) starts a new run.
+
 The Action uses only `contents: read` and `pull-requests: read`. Install it in every
 participating repository; no cross-repository credential or Arch GitHub App is needed.
 
@@ -55,7 +64,8 @@ participating repository; no cross-repository credential or Arch GitHub App is n
 | `deployment-id` | Unique actual deployment identity; HTTP retries keep it |
 | `deployed-at` | ISO completion timestamp captured at readiness, with timezone |
 | `deployment-order` | Numeric tie breaker; defaults to `github.run_number` |
-| `mode` | `deploy` (default) or manual `refresh` of already-deployed PR links |
+| `mode` | `deploy` (default), manual `refresh` of already-deployed PR links, or `preview` |
+| `preview-url` | Ready PR preview URL; required in `preview` mode |
 
 The Action emits `report-id` and `app-url`, then exits after acceptance. It never
 polls QA or waits for linked repositories. An actual redeployment uses a new ID,
@@ -66,6 +76,7 @@ even for the same commit. Do not change completion time on an HTTP retry.
 - Deployment identity, deployed commit, completion order and accepted-report cursor.
 - Included PR numbers and merged revisions, original deployment-coordination sections.
 - Titles and descriptions for newly shipped changes; bounded direct-commit messages.
+- In preview mode: the open PR's number, title and description, the preview commit and its URL.
 
 GitHub credentials, files, diffs and raw API responses are not sent. This Action
 does access repository APIs inside your runner. Using `@latest` means trusting

@@ -19,11 +19,13 @@ inputs:
   deployment-order:
     description: Numeric source ordering used to break equal completion timestamps.
   mode:
-    description: deploy or refresh. Refresh only updates the current deployment's coordination metadata.
+    description: deploy, refresh or preview. Refresh only updates the current deployment's coordination metadata. Preview reports one open PR's preview and never changes the current deployment.
     default: deploy
+  preview-url:
+    description: URL of the ready PR preview. Required in preview mode; must be one of the app's allowed origins.
 outputs:
   report-id:
-    description: Accepted deployment report identifier.
+    description: Accepted deployment report identifier (deploy and refresh modes).
   app-url:
     description: Arch app URL.
 runs:

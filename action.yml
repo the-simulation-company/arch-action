@@ -1,0 +1,31 @@
+name: Arch deployment reporting
+description: Report deployed PRs from your runner without granting Arch repository access.
+inputs:
+  arch-token:
+    description: Arch admin-issued token for this deployment target.
+    required: true
+  api-url:
+    description: Arch API origin provided by your admin.
+    required: true
+  github-token:
+    description: Temporary token used only for GitHub API requests in this runner.
+    default: ${{ github.token }}
+  deployed-sha:
+    description: Actual deployed commit. Inferred only for deployment_status events.
+  deployment-id:
+    description: Stable identity of this deployment, reused for HTTP retries.
+  deployed-at:
+    description: Deployment completion time in ISO 8601, captured immediately after readiness.
+  deployment-order:
+    description: Numeric source ordering used to break equal completion timestamps.
+  mode:
+    description: deploy or refresh. Refresh only updates the current deployment's coordination metadata.
+    default: deploy
+outputs:
+  report-id:
+    description: Accepted deployment report identifier.
+  app-url:
+    description: Arch app URL.
+runs:
+  using: node24
+  main: index.mjs

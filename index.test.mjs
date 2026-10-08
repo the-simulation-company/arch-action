@@ -9,12 +9,33 @@ const deployment = {mode: 'deploy', revision: b, deployed_at: '2026-10-07T12:00:
 const inputs = {'api-url': 'https://arch.example', 'arch-token': 'arch-secret', 'github-token': 'github-secret',
   'deployed-sha': b, 'deployed-at': deployment.deployed_at, 'deployment-id': deployment.deployment_id};
 const pr = (number, sha, body = 'Test checkout') => ({number, merge_commit_sha: sha, merged_at: '2026-10-01', title: 'Checkout', body,
+  base: {repo: {full_name: 'acme/web'}},
   diff_url: 'do-not-send', head: {repo: {source: 'do-not-send'}}, user: {email: 'do-not-send'}});
 const reply = (data, status = 200) => new Response(JSON.stringify(data), {status});
 
 test('direct input uses actual deployed SHA, not workflow SHA', () => {
   assert.deepEqual(deploymentInput(inputs, {}, {...env, GITHUB_SHA: a}, state), deployment);
   assert.throws(() => deploymentInput({}, {}, env, state), /Pass deployed-sha/);
+  assert.throws(() => deploymentInput({...inputs, mode: 'refesh'}, {}, env, state), /Mode must be/);
+});
+
+test('timezone-free completion fails before GitHub reads or reporting', async () => {
+  let calls = 0;
+  await assert.rejects(run({...inputs, 'deployed-at': '2026-10-07T12:00:00'}, {}, env,
+    async () => {calls++; return reply(state);}), /Invalid deployed commit, completion time or ordering/);
+  assert.equal(calls, 1);
+});
+
+test('foreign PR associations never supply descriptions or membership', async () => {
+  const foreign = {...pr(2, b, 'Foreign private description'), base: {repo: {full_name: 'other/repo'}}};
+  const result = await collect(async path => {
+    if (path.includes(`/compare/${a}...${b}`)) return {status: 'ahead', commits: [{sha: b, commit: {message: 'Local commit'}}]};
+    if (path.includes(`/commits/${b}/pulls`)) return [foreign];
+    throw Error(path);
+  }, state.repository, state, deployment);
+  assert.deepEqual(result.prs, []);
+  assert.doesNotMatch(JSON.stringify(result), /Foreign private description|other\/repo/);
+  assert.deepEqual(result.commits, [{revision: b, message: 'Local commit'}]);
 });
 
 test('provider event filters success/environment and uses event identity/order', () => {

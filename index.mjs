@@ -26,6 +26,9 @@ export function coordination(body = '') {
 }
 
 export function deploymentInput(inputs, event, env, state) {
+  if (inputs.mode && !['deploy', 'refresh'].includes(inputs.mode)) {
+    throw new Error('Mode must be deploy or refresh');
+  }
   if (inputs.mode === 'refresh') {
     if (!state.report_id) throw new Error('Initialize this target with a real deployment first');
     return {
@@ -59,6 +62,12 @@ function member(pr, withBody) {
     coordination: coordination(pr.body || ''),
     title: withBody ? pr.title : '', body: withBody ? (pr.body || '') : null,
   };
+}
+
+function inRepository(pr, repository) {
+  const base = pr.base?.repo?.full_name;
+  if (typeof base !== 'string') throw new Error('Incomplete PR repository identity');
+  return base.toLowerCase() === repository.toLowerCase();
 }
 
 export function createClient(origin, token, fetcher = fetch, github = false) {
@@ -163,7 +172,9 @@ export async function collect(github, repository, state, deployment) {
   if (replace) {
     const reachable = new Set((await pages(github, `${repo}/commits?sha=${deployment.revision}`)).map(c => c.sha));
     for (const pr of await pages(github, `${repo}/pulls?state=closed`)) {
-      if (pr.merged_at && reachable.has(pr.merge_commit_sha)) inventory.set(pr.number, member(pr, false));
+      if (pr.merged_at && inRepository(pr, repository) && reachable.has(pr.merge_commit_sha)) {
+        inventory.set(pr.number, member(pr, false));
+      }
     }
   }
   const direct = [];
@@ -173,7 +184,7 @@ export async function collect(github, repository, state, deployment) {
   if (deployment.mode !== 'refresh' && !historical) {
     for (const commit of commits) {
       const associated = (await pages(github, `${repo}/commits/${commit.sha}/pulls`))
-        .filter(pr => pr.merged_at);
+        .filter(pr => pr.merged_at && inRepository(pr, repository));
       let matched = false;
       for (const pr of associated) {
         let included = inventory.has(pr.number);
@@ -233,7 +244,8 @@ export async function run(inputs, event, env, fetcher = fetch) {
   const deployment = deploymentInput(inputs, event, env, state);
   if (!deployment) return null;
   if (!shaPattern.test(deployment.revision) || !Number.isSafeInteger(deployment.order)
-      || deployment.order < 0 || !Number.isFinite(Date.parse(deployment.deployed_at))) {
+      || deployment.order < 0 || !Number.isFinite(Date.parse(deployment.deployed_at))
+      || !/(?:Z|[+-]\d{2}:\d{2})$/i.test(deployment.deployed_at)) {
     throw new Error('Invalid deployed commit, completion time or ordering');
   }
   // A rerun for the current deployment must reproduce its original report base.

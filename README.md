@@ -8,18 +8,21 @@ and PR metadata, records what is live, and coordinates QA across linked PRs.
 
 An **Arch admin** configures your app's URL, saved test login, notification settings,
 and one target for each repository/environment. They supply a target-scoped token
-and a workflow pinned to the reviewed full commit SHA. You save the token as the
+and a workflow using the automatically updated `@latest` Action. You save the token as the
 repository secret `ARCH_DEPLOYMENT_TOKEN` and add that workflow.
 
-The production API is `https://api.foothill.sh`. Pin the reviewed release, not a
-moving branch or tag:
+The production API is `https://api.foothill.sh`. Install the latest published release:
 
 ```yaml
-uses: the-simulation-company/arch-action@717b2f967670c59d06a77f17a905376d19b89254 # v1.0.0
+uses: the-simulation-company/arch-action@latest
 ```
 
 This is the Action reference, not a complete workflow. Use the admin-generated
 template for your deployment system and target environment.
+
+`latest` automatically advances after a stable release passes tests, including
+across major versions. Subsequent runs pick up updates without a workflow edit.
+Existing commit-pinned workflows need a one-time change to `@latest` to opt in.
 
 ### Your deployment workflow
 
@@ -65,8 +68,10 @@ even for the same commit. Do not change completion time on an HTTP retry.
 - Titles and descriptions for newly shipped changes; bounded direct-commit messages.
 
 GitHub credentials, files, diffs and raw API responses are not sent. This Action
-does access repository APIs inside your runner, so inspect the code and pin a
-reviewed commit. No executable dependencies are downloaded at runtime: this is a
+does access repository APIs inside your runner. Using `@latest` means trusting
+Arch's future releases, not just the code you reviewed today. Organizations that
+require immutable Action references must approve that policy or retain a commit
+pin. No executable dependencies are downloaded at runtime: this is a
 Node 24 JavaScript Action using only the standard library.
 
 ## How reporting works
@@ -92,6 +97,15 @@ errors; fix the PR and rerun the refresh workflow.
 
 Run `node --test` on Node 24. Tests use injected HTTP responses and cover trigger
 selection, ancestry, inventories, pagination, stale bases and credential boundaries.
+
+## Publishing
+
+After backend compatibility is deployed, publish a stable, versioned GitHub release
+and mark it as the latest release. The `Publish latest` workflow tests that release
+on Node 24, then moves only the `latest` tag to its commit. Drafts and prereleases
+are not promoted. The workflow can also be dispatched manually to retry promotion
+or initialize the tag. Version tags stay unchanged; do not create a GitHub release
+for the moving `latest` tag itself.
 
 GitHub references: [deployment events](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows),
 [token behavior](https://docs.github.com/en/actions/concepts/security/github_token),

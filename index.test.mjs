@@ -206,7 +206,7 @@ test('batching respects both count and UTF-8 byte size', () => {
 
 test('preview reports the event PR without reading or changing the deployed inventory', async () => {
   const sent = [];
-  const event = {pull_request: {...pr(12, null, 'Private preview description'), head: {sha: c}}};
+  const event = {pull_request: {...pr(12, null, 'Private preview description'), state: 'open', head: {sha: c}}};
   const receipt = await run({...inputs, mode: 'preview', 'deployed-sha': '', 'deployment-id': '',
     'preview-url': 'https://pr-12.preview.example'}, event, env, async (url, options) => {
     sent.push([url.href, options.body && JSON.parse(options.body)]);
@@ -230,4 +230,10 @@ test('preview outside a PR event finds the one open PR serving that commit', asy
   assert.equal((await run(previewInputs, {}, env, fetcher([open, {...open, number: 8, state: 'closed'}]))).status, 'accepted');
   assert.equal(await run(previewInputs, {}, env, fetcher([{...open, head: {sha: a}}])), null);
   assert.throws(() => previewInput({...previewInputs, 'preview-url': ''}, {}, env), /preview-url/);
+});
+
+test('closed event PR sends no preview report', async () => {
+  const event = {pull_request: {...pr(12, null), state: 'closed', head: {sha: c}}};
+  assert.equal(await run({...inputs, mode: 'preview', 'preview-url': 'https://p.example'}, event, env,
+    async url => { throw Error(url.href); }), null);
 });

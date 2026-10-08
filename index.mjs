@@ -70,7 +70,9 @@ export function previewInput(inputs, event, env) {
 
 // A pull_request event names its PR even when the preview serves the merge ref.
 export async function previewPR(github, repository, revision, event) {
-  if (event.pull_request && inRepository(event.pull_request, repository)) return event.pull_request;
+  if (event.pull_request && inRepository(event.pull_request, repository)) {
+    return event.pull_request.state === 'open' ? event.pull_request : null;
+  }
   const open = (await pages(github, `/repos/${repository}/commits/${revision}/pulls`))
     .filter(pr => pr.state === 'open' && pr.head?.sha === revision && inRepository(pr, repository));
   if (open.length > 1) throw new Error('More than one open PR serves this preview commit');

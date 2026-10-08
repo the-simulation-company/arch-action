@@ -67,7 +67,7 @@ participating repository; no cross-repository credential or Arch GitHub App is n
 | `mode` | `deploy` (default), manual `refresh` of already-deployed PR links, or `preview` |
 | `preview-url` | Ready PR preview URL; required in `preview` mode |
 
-The Action emits `report-id` and `app-url`, then exits after acceptance. It never
+The Action emits `app-url`, plus `report-id` for deploy and refresh, then exits after acceptance. It never
 polls QA or waits for linked repositories. An actual redeployment uses a new ID,
 even for the same commit. Do not change completion time on an HTTP retry.
 

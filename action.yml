@@ -11,7 +11,7 @@ inputs:
     description: Temporary token used only for GitHub API requests in this runner.
     default: ${{ github.token }}
   deployed-sha:
-    description: Actual deployed commit. Inferred only for deployment_status events.
+    description: Actual deployed commit. Inferred from deployment_status events, and in preview mode from the pull_request head.
   deployment-id:
     description: Stable identity of this deployment, reused for HTTP retries.
   deployed-at:

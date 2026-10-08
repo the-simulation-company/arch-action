@@ -208,7 +208,7 @@ test('batching respects both count and UTF-8 byte size', () => {
 test('preview reports the event PR without reading or changing the deployed inventory', async () => {
   const sent = [];
   const current = {...pr(12, null, 'Private preview description'), state: 'open',
-    head: {sha: c}, labels: [{name: 'arch-qa'}]};
+    head: {sha: c, ref: 'feature/checkout'}, user: {login: 'octo', id: 7}, labels: [{name: 'arch-qa'}]};
   const event = {pull_request: current};
   const receipt = await run({...inputs, mode: 'preview', 'deployed-sha': '', 'deployment-id': '',
     'preview-url': 'https://pr-12.preview.example'}, event, env, async (url, options) => {
@@ -219,7 +219,8 @@ test('preview reports the event PR without reading or changing the deployed inve
   assert.equal(receipt.goal_run_id, 'run-1');
   assert.deepEqual(sent, [['https://api.foothill.sh/v1/deployments/preview', {
     repository: 'acme/web', revision: c, url: 'https://pr-12.preview.example', deployment_id: '100:1',
-    pr: {number: 12, title: 'Checkout', body: 'Private preview description'},
+    pr: {number: 12, title: 'Checkout', body: 'Private preview description',
+      branch: 'feature/checkout', author: {login: 'octo', id: 7}},
   }]]);
 });
 

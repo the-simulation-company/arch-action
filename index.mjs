@@ -110,7 +110,12 @@ async function reportPreview(arch, github, inputs, event, env) {
   const preview = previewInput(inputs, event, env);
   return arch('/v1/deployments/preview', {
     repository: env.GITHUB_REPOSITORY, ...preview,
-    pr: {number: pr.number, title: pr.title || '', body: pr.body || ''},
+    pr: {
+      number: pr.number, title: pr.title || '', body: pr.body || '',
+      // Arch keys the branch preview by PR and names it after the head ref.
+      ...(pr.head?.ref ? {branch: pr.head.ref} : {}),
+      ...(pr.user?.login && pr.user?.id ? {author: {login: pr.user.login, id: pr.user.id}} : {}),
+    },
   });
 }
 

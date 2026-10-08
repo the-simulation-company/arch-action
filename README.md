@@ -11,9 +11,15 @@ and one target for each repository/environment. They supply a target-scoped toke
 and a workflow pinned to the reviewed full commit SHA. You save the token as the
 repository secret `ARCH_DEPLOYMENT_TOKEN` and add that workflow.
 
-This repository is in pre-release review. Do not install a moving branch or tag.
-The backend must be deployed and the staging integration verified before an admin
-distributes an Action commit to customers.
+The production API is `https://api.foothill.sh`. Pin the reviewed release, not a
+moving branch or tag:
+
+```yaml
+uses: the-simulation-company/arch-action@717b2f967670c59d06a77f17a905376d19b89254 # v1.0.0
+```
+
+This is the Action reference, not a complete workflow. Use the admin-generated
+template for your deployment system and target environment.
 
 ### Your deployment workflow
 

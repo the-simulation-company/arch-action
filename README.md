@@ -11,7 +11,8 @@ and one target for each repository/environment. They supply a target-scoped toke
 and a workflow using the automatically updated `@latest` Action. You save the token as the
 repository secret `ARCH_DEPLOYMENT_TOKEN` and add that workflow.
 
-The production API is `https://api.foothill.sh`. Install the latest published release:
+The Action always reports to `https://api.foothill.sh`; no API URL configuration is
+needed. Install the latest published release:
 
 ```yaml
 uses: the-simulation-company/arch-action@latest
@@ -49,7 +50,6 @@ participating repository; no cross-repository credential or Arch GitHub App is n
 | Input | Meaning |
 | --- | --- |
 | `arch-token` | Required target-scoped secret issued by your Arch admin |
-| `api-url` | Required Arch API HTTPS origin supplied by your admin |
 | `github-token` | Defaults to the repository's temporary `github.token` |
 | `deployed-sha` | Full deployed commit SHA for direct workflow calls |
 | `deployment-id` | Unique actual deployment identity; HTTP retries keep it |

@@ -4,9 +4,6 @@ inputs:
   arch-token:
     description: Arch admin-issued token for this deployment target.
     required: true
-  api-url:
-    description: Arch API origin provided by your admin.
-    required: true
   github-token:
     description: Temporary token used only for GitHub API requests in this runner.
     default: ${{ github.token }}

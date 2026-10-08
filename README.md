@@ -115,7 +115,7 @@ even for the same commit. Do not change completion time on an HTTP retry.
 - Deployment identity, deployed commit, completion order and accepted-report cursor.
 - Included PR numbers and merged revisions, original deployment-coordination sections.
 - Titles and descriptions for newly shipped changes; bounded direct-commit messages.
-- In preview mode: the open PR's number, title and description, the preview commit and its URL.
+- In preview mode: the open PR's number, title, description, head branch name and author (GitHub login and user ID), the preview commit and its URL.
 
 GitHub credentials, files, diffs and raw API responses are not sent. This Action
 does access repository APIs inside your runner. Using `@latest` means trusting

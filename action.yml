@@ -8,7 +8,7 @@ inputs:
     description: Temporary token used only for GitHub API requests in this runner.
     default: ${{ github.token }}
   deployed-sha:
-    description: Actual deployed commit. Inferred from deployment_status events, and in preview mode from the pull_request head.
+    description: Actual deployed commit. Inferred from deployment_status events, and in preview mode from the current labeled PR's deployment.
   deployment-id:
     description: Stable identity of this deployment, reused for HTTP retries.
   deployed-at:
@@ -16,10 +16,13 @@ inputs:
   deployment-order:
     description: Numeric source ordering used to break equal completion timestamps.
   mode:
-    description: deploy, refresh or preview. Refresh only updates the current deployment's coordination metadata. Preview reports one open PR's preview and never changes the current deployment.
+    description: deploy, refresh or preview. Refresh only updates the current deployment's coordination metadata. Preview reports a ready open PR with the arch-qa label and never changes the current deployment.
     default: deploy
   preview-url:
-    description: URL of the ready PR preview. Required in preview mode; must be one of the app's allowed origins.
+    description: Ready preview URL for direct workflow calls. Otherwise inferred from GitHub deployment statuses; must be one of the app's allowed origins.
+  preview-environment:
+    description: GitHub deployment environment used for automatic PR previews.
+    default: Preview
 outputs:
   report-id:
     description: Accepted deployment report identifier (deploy and refresh modes).

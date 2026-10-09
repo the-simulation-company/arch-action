@@ -42,7 +42,54 @@ event, not the workflow SHA. Your provider must publish GitHub deployment status
 Events written by a workflow's `GITHUB_TOKEN` do not normally trigger another
 workflow, so call this Action directly from existing deployment jobs.
 
-The Action uses only `contents: read` and `pull-requests: read`. Install it in every
+### PR previews
+
+Add the admin-generated preview workflow to your default branch, then add the
+`arch-qa` label to PRs you want tested. It reuses `ARCH_DEPLOYMENT_TOKEN`:
+
+```yaml
+name: Arch PR preview QA
+on:
+  pull_request_target:
+    types: [labeled]
+  deployment_status:
+permissions:
+  contents: read
+  pull-requests: read
+  deployments: read
+jobs:
+  arch:
+    if: >-
+      (github.event_name == 'pull_request_target' && github.event.label.name == 'arch-qa') ||
+      (github.event_name == 'deployment_status' && github.event.deployment_status.state == 'success')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: the-simulation-company/arch-action@latest
+        with:
+          arch-token: ${{ secrets.ARCH_DEPLOYMENT_TOKEN }}
+          mode: preview
+```
+
+Adding the label reports the current head's ready preview, or sends no report
+until the provider publishes deployment success. New pushes run QA when their
+previews become ready while the label remains. The Action rereads the PR's current
+label, state and head before reporting: unlabeled or closed PRs and old commits
+are skipped. The two events share `github:<deployment ID>`, so labeling an already
+reported preview or rerunning its workflow returns the same Arch run.
+
+Your provider must publish GitHub deployment statuses with an `environment_url`.
+The environment defaults to `Preview`, matching Vercel; set `preview-environment`
+for another preview environment. Production deployments are ignored. The URL
+must be one of the app's allowed origins. This workflow runs only the published
+Action; it never checks out or executes PR code.
+
+For an existing deployment job, call `mode: preview` after readiness with explicit
+`deployed-sha`, `preview-url` and a stable `deployment-id`. The label is still
+required. Automatic late-label lookup requires GitHub deployment records.
+A preview never changes what Arch records as deployed for the target.
+
+Deploy and refresh use `contents: read` and `pull-requests: read`; automatic previews
+also need `deployments: read`. Install the Action in every
 participating repository; no cross-repository credential or Arch GitHub App is needed.
 
 ## Inputs and outputs
@@ -55,9 +102,11 @@ participating repository; no cross-repository credential or Arch GitHub App is n
 | `deployment-id` | Unique actual deployment identity; HTTP retries keep it |
 | `deployed-at` | ISO completion timestamp captured at readiness, with timezone |
 | `deployment-order` | Numeric tie breaker; defaults to `github.run_number` |
-| `mode` | `deploy` (default) or manual `refresh` of already-deployed PR links |
+| `mode` | `deploy` (default), manual `refresh` of already-deployed PR links, or `preview` |
+| `preview-url` | Ready PR preview URL for direct calls; otherwise inferred from deployment statuses |
+| `preview-environment` | GitHub preview deployment environment; defaults to `Preview` |
 
-The Action emits `report-id` and `app-url`, then exits after acceptance. It never
+The Action emits `app-url`, plus `report-id` for deploy and refresh, then exits after acceptance. It never
 polls QA or waits for linked repositories. An actual redeployment uses a new ID,
 even for the same commit. Do not change completion time on an HTTP retry.
 
@@ -66,6 +115,7 @@ even for the same commit. Do not change completion time on an HTTP retry.
 - Deployment identity, deployed commit, completion order and accepted-report cursor.
 - Included PR numbers and merged revisions, original deployment-coordination sections.
 - Titles and descriptions for newly shipped changes; bounded direct-commit messages.
+- In preview mode: the open PR's number, title and description, the preview commit and its URL.
 
 GitHub credentials, files, diffs and raw API responses are not sent. This Action
 does access repository APIs inside your runner. Using `@latest` means trusting

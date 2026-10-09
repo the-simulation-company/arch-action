@@ -27,7 +27,7 @@ export function coordination(body = '') {
 
 export function deploymentInput(inputs, event, env, state) {
   if (inputs.mode && !['deploy', 'refresh'].includes(inputs.mode)) {
-    throw new Error('Mode must be deploy or refresh');
+    throw new Error('Mode must be deploy, refresh or preview');
   }
   if (inputs.mode === 'refresh') {
     if (!state.report_id) throw new Error('Initialize this target with a real deployment first');
@@ -54,6 +54,64 @@ export function deploymentInput(inputs, event, env, state) {
     deployment_id: inputs['deployment-id'], deployed_at: inputs['deployed-at'],
     order: Number(inputs['deployment-order'] || env.GITHUB_RUN_NUMBER),
   };
+}
+
+export function previewInput(inputs, event, env) {
+  const revision = event.deployment?.sha || inputs['deployed-sha'] || event.pull_request?.head?.sha;
+  const url = event.deployment_status?.environment_url || inputs['preview-url'];
+  if (!revision || !url) {
+    throw new Error('Pass deployed-sha and preview-url for the ready preview');
+  }
+  if (!shaPattern.test(revision)) throw new Error('Invalid preview commit');
+  return {
+    revision, url,
+    deployment_id: event.deployment?.id ? `github:${event.deployment.id}`
+      : inputs['deployment-id'] || `${env.GITHUB_RUN_ID}:${env.GITHUB_RUN_ATTEMPT}`,
+  };
+}
+
+// A pull_request event names its PR even when the preview serves the merge ref.
+export async function previewPR(github, repository, revision, event) {
+  let candidate;
+  if (event.pull_request && inRepository(event.pull_request, repository)) {
+    candidate = event.pull_request;
+  } else {
+    if (!shaPattern.test(revision)) throw new Error('Invalid preview commit');
+    const open = (await pages(github, `/repos/${repository}/commits/${revision}/pulls`))
+      .filter(pr => pr.state === 'open' && pr.head?.sha === revision && inRepository(pr, repository));
+    if (open.length > 1) throw new Error('More than one open PR serves this preview commit');
+    candidate = open[0];
+  }
+  if (!candidate || candidate.state !== 'open') return null;
+  const pr = await github(`/repos/${repository}/pulls/${candidate.number}`);
+  const expectedHead = event.pull_request?.head?.sha || revision;
+  return pr.state === 'open' && inRepository(pr, repository) && pr.head?.sha === expectedHead
+    && pr.labels?.some(label => label.name === 'arch-qa') ? pr : null;
+}
+
+async function reportPreview(arch, github, inputs, event, env) {
+  const environment = inputs['preview-environment'] || 'Preview';
+  if (event.deployment_status && (event.deployment_status.state !== 'success'
+      || event.deployment?.environment !== environment || event.deployment.production_environment)) return null;
+  const revision = event.deployment?.sha || inputs['deployed-sha'] || event.pull_request?.head?.sha;
+  const pr = await previewPR(github, env.GITHUB_REPOSITORY, revision, event);
+  if (!pr) return null;
+  if (!inputs['preview-url'] && !event.deployment_status) {
+    const deployments = await pages(github, `/repos/${env.GITHUB_REPOSITORY}/deployments`
+      + `?sha=${pr.head.sha}&environment=${encodeURIComponent(environment)}`);
+    const deployment = deployments.find(item => item.sha === pr.head.sha
+      && item.environment === environment && !item.production_environment);
+    if (!deployment) return null;
+    const statuses = await github(`/repos/${env.GITHUB_REPOSITORY}/deployments/${deployment.id}/statuses?per_page=1`);
+    if (!Array.isArray(statuses)) throw new Error('Incomplete GitHub response');
+    if (statuses[0]?.state !== 'success') return null;
+    event = {deployment, deployment_status: statuses[0]};
+  }
+  const preview = previewInput(inputs, event, env);
+  return arch('/v1/deployments/preview', {
+    repository: env.GITHUB_REPOSITORY, ...preview,
+    pr: {number: pr.number, title: pr.title || '', body: pr.body || ''},
+  });
 }
 
 function member(pr, withBody) {
@@ -237,6 +295,7 @@ export function batches(data) {
 export async function run(inputs, event, env, fetcher = fetch) {
   const arch = createClient('https://api.foothill.sh', inputs['arch-token'], fetcher);
   const github = createClient('https://api.github.com', inputs['github-token'], fetcher, true);
+  if (inputs.mode === 'preview') return reportPreview(arch, github, inputs, event, env);
   let state = await currentDeployment(arch);
   if (state.repository.toLowerCase() !== env.GITHUB_REPOSITORY.toLowerCase()) {
     throw new Error('The Arch token belongs to a different repository');
@@ -278,7 +337,7 @@ export async function run(inputs, event, env, fetcher = fetch) {
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try {
     const names = ['arch-token', 'github-token', 'deployed-sha', 'deployment-id',
-      'deployed-at', 'deployment-order', 'mode'];
+      'deployed-at', 'deployment-order', 'mode', 'preview-url', 'preview-environment'];
     const inputs = Object.fromEntries(names.map(name => [name, process.env['INPUT_' + name.toUpperCase()] || '']));
     for (const name of ['arch-token', 'github-token']) {
       if (!inputs[name]) throw new Error(`Missing ${name}`);
@@ -288,8 +347,9 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     if (receipt) {
       console.log(`Arch deployment ${receipt.status}. ${receipt.app_url || receipt.app_path}`);
       if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT,
-        `report-id=${receipt.report_id}\napp-url=${receipt.app_url || receipt.app_path}\n`);
-    } else console.log('Deployment does not match this target; no report sent.');
+        (receipt.report_id ? `report-id=${receipt.report_id}\n` : '')
+        + `app-url=${receipt.app_url || receipt.app_path}\n`);
+    } else console.log('No matching deployment or ready arch-qa PR preview; no report sent.');
   } catch (error) {
     console.error('Arch reporting failed: ' + error.message);
     process.exitCode = 1;

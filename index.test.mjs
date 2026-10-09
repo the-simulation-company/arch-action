@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {batches, collect, coordination, createClient, currentDeployment, deploymentInput, run} from './index.mjs';
+import {batches, collect, coordination, createClient, currentDeployment, deploymentInput, previewInput, run} from './index.mjs';
 
 const a = 'a'.repeat(40), b = 'b'.repeat(40), c = 'c'.repeat(40);
 const state = {report_id: 'previous', revision: a, repository: 'acme/web', environment: 'staging', prs: [], next_after: null};
@@ -203,4 +203,127 @@ test('batching respects both count and UTF-8 byte size', () => {
   const prs = Array.from({length: 1001}, (_, i) => ({number: i + 1}));
   assert.deepEqual(batches({prs, removed: [], commits: []}).map(p => p.prs.length), [500, 500, 1]);
   assert.throws(() => batches({prs: [{body: 'x'.repeat(900000)}], removed: [], commits: []}), /exceeds batch/);
+});
+
+test('preview reports the event PR without reading or changing the deployed inventory', async () => {
+  const sent = [];
+  const current = {...pr(12, null, 'Private preview description'), state: 'open',
+    head: {sha: c}, labels: [{name: 'arch-qa'}]};
+  const event = {pull_request: current};
+  const receipt = await run({...inputs, mode: 'preview', 'deployed-sha': '', 'deployment-id': '',
+    'preview-url': 'https://pr-12.preview.example'}, event, env, async (url, options) => {
+    if (url.pathname === '/repos/acme/web/pulls/12') return reply(current);
+    sent.push([url.href, options.body && JSON.parse(options.body)]);
+    return reply({status: 'accepted', goal_run_id: 'run-1', app_url: 'https://arch.example/run'});
+  });
+  assert.equal(receipt.goal_run_id, 'run-1');
+  assert.deepEqual(sent, [['https://api.foothill.sh/v1/deployments/preview', {
+    repository: 'acme/web', revision: c, url: 'https://pr-12.preview.example', deployment_id: '100:1',
+    pr: {number: 12, title: 'Checkout', body: 'Private preview description'},
+  }]]);
+});
+
+test('preview outside a PR event finds the one open PR serving that commit', async () => {
+  const open = {...pr(7, null), state: 'open', head: {sha: c}, labels: [{name: 'arch-qa'}]};
+  const fetcher = pulls => async url => {
+    if (url.pathname === `/repos/acme/web/commits/${c}/pulls`) return reply(pulls);
+    if (url.pathname === '/repos/acme/web/pulls/7') return reply(open);
+    if (url.pathname === '/v1/deployments/preview') return reply({status: 'accepted'});
+    throw Error(url.href);
+  };
+  const previewInputs = {...inputs, mode: 'preview', 'deployed-sha': c, 'preview-url': 'https://p.example'};
+  assert.equal((await run(previewInputs, {}, env, fetcher([open, {...open, number: 8, state: 'closed'}]))).status, 'accepted');
+  assert.equal(await run(previewInputs, {}, env, fetcher([{...open, head: {sha: a}}])), null);
+  assert.throws(() => previewInput({...previewInputs, 'preview-url': ''}, {}, env), /preview-url/);
+});
+
+test('closed event PR sends no preview report', async () => {
+  const event = {pull_request: {...pr(12, null), state: 'closed', head: {sha: c}}};
+  assert.equal(await run({...inputs, mode: 'preview', 'preview-url': 'https://p.example'}, event, env,
+    async url => { throw Error(url.href); }), null);
+});
+
+test('labeling a ready preview and deployment success report the same deployment identity', async () => {
+  const current = {...pr(7, null), state: 'open', head: {sha: c}, labels: [{name: 'arch-qa'}]};
+  const deployment = {id: 12, sha: c, environment: 'Preview', production_environment: false};
+  const status = {id: 99, state: 'success', environment_url: 'https://p.example'};
+  const reports = [];
+  const previewInputs = {'arch-token': inputs['arch-token'], 'github-token': inputs['github-token'], mode: 'preview'};
+  const fetcher = async (url, options) => {
+    if (url.pathname === `/repos/acme/web/commits/${c}/pulls`) return reply([current]);
+    if (url.pathname === '/repos/acme/web/pulls/7') return reply(current);
+    if (url.pathname === '/repos/acme/web/deployments') {
+      assert.equal(url.searchParams.get('sha'), c);
+      assert.equal(url.searchParams.get('environment'), 'Preview');
+      return reply([deployment]);
+    }
+    if (url.pathname === '/repos/acme/web/deployments/12/statuses') {
+      assert.equal(url.searchParams.get('per_page'), '1');
+      return reply([status]);
+    }
+    if (url.pathname === '/v1/deployments/preview') {
+      reports.push(JSON.parse(options.body));
+      return reply({status: 'accepted'});
+    }
+    throw Error(url.href);
+  };
+  await run(previewInputs, {deployment, deployment_status: status}, env, fetcher);
+  // The queued label event is only a reference; current GitHub state controls opt-in.
+  await run(previewInputs, {pull_request: {...current, labels: []}},
+    {...env, GITHUB_RUN_ID: '101', GITHUB_RUN_ATTEMPT: '2'}, fetcher);
+  assert.equal(reports.length, 2);
+  assert.deepEqual(reports[0], reports[1]);
+  assert.equal(reports[0].deployment_id, 'github:12');
+});
+
+test('label before readiness waits; ready previews of new pushes get new identities', async () => {
+  let head = c;
+  let ready = false;
+  const reports = [];
+  const current = () => ({...pr(7, null), state: 'open', head: {sha: head}, labels: [{name: 'arch-qa'}]});
+  const deployment = () => ({id: head === c ? 12 : 13, sha: head, environment: 'Preview'});
+  const status = () => ({state: ready ? 'success' : 'in_progress', environment_url: 'https://p.example'});
+  const previewInputs = {'arch-token': inputs['arch-token'], 'github-token': inputs['github-token'], mode: 'preview'};
+  const fetcher = async (url, options) => {
+    if (url.pathname.endsWith('/pulls/7')) return reply(current());
+    if (url.pathname.endsWith('/pulls')) return reply([current()]);
+    if (url.pathname.endsWith('/deployments')) return reply([deployment()]);
+    if (url.pathname.endsWith('/statuses')) return reply([status()]);
+    if (url.pathname === '/v1/deployments/preview') {
+      reports.push(JSON.parse(options.body));
+      return reply({status: 'accepted'});
+    }
+    throw Error(url.href);
+  };
+  assert.equal(await run(previewInputs, {pull_request: current()}, env, fetcher), null);
+  ready = true;
+  await run(previewInputs, {deployment: deployment(), deployment_status: status()}, env, fetcher);
+  head = b;
+  await run(previewInputs, {deployment: deployment(), deployment_status: status()}, env, fetcher);
+  assert.deepEqual(reports.map(({revision, deployment_id}) => [revision, deployment_id]),
+    [[c, 'github:12'], [b, 'github:13']]);
+});
+
+test('preview rereads labels, state and head and skips events that are no longer eligible', async () => {
+  const queued = {...pr(7, null), state: 'open', head: {sha: c}, labels: [{name: 'arch-qa'}]};
+  const previewInputs = {...inputs, mode: 'preview', 'deployed-sha': c, 'preview-url': 'https://p.example'};
+  for (const current of [
+    {...queued, labels: []}, {...queued, state: 'closed'}, {...queued, head: {sha: b}},
+  ]) {
+    assert.equal(await run(previewInputs, {pull_request: queued}, env, async url => {
+      assert.equal(url.pathname, '/repos/acme/web/pulls/7');
+      return reply(current);
+    }), null);
+  }
+});
+
+test('failed, staging and production deployment events never report previews', async () => {
+  const previewInputs = {...inputs, mode: 'preview'};
+  for (const event of [
+    {deployment: {environment: 'Preview'}, deployment_status: {state: 'failure'}},
+    {deployment: {environment: 'staging'}, deployment_status: {state: 'success'}},
+    {deployment: {environment: 'Preview', production_environment: true}, deployment_status: {state: 'success'}},
+  ]) {
+    assert.equal(await run(previewInputs, event, env, async url => {throw Error(url.href);}), null);
+  }
 });

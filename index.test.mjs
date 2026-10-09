@@ -6,7 +6,7 @@ const a = 'a'.repeat(40), b = 'b'.repeat(40), c = 'c'.repeat(40);
 const state = {report_id: 'previous', revision: a, repository: 'acme/web', environment: 'staging', prs: [], next_after: null};
 const env = {GITHUB_REPOSITORY: 'acme/web', GITHUB_RUN_NUMBER: '20', GITHUB_RUN_ID: '100', GITHUB_RUN_ATTEMPT: '1'};
 const deployment = {mode: 'deploy', revision: b, deployed_at: '2026-10-07T12:00:00Z', order: 20, deployment_id: 'd-20'};
-const inputs = {'api-url': 'https://arch.example', 'arch-token': 'arch-secret', 'github-token': 'github-secret',
+const inputs = {'arch-token': 'arch-secret', 'github-token': 'github-secret',
   'deployed-sha': b, 'deployed-at': deployment.deployed_at, 'deployment-id': deployment.deployment_id};
 const pr = (number, sha, body = 'Test checkout') => ({number, merge_commit_sha: sha, merged_at: '2026-10-01', title: 'Checkout', body,
   base: {repo: {full_name: 'acme/web'}},
@@ -144,7 +144,7 @@ test('manual refresh updates coordination only; no invented deployment context',
 test('partial GitHub failure never submits an empty replacement', async () => {
   let posted = false;
   const fetcher = async (url, options) => {
-    if (url.host === 'arch.example') {
+    if (url.host === 'api.foothill.sh') {
       if (options.method === 'POST') posted = true;
       return reply({...state, revision: null, report_id: null});
     }
@@ -155,7 +155,7 @@ test('partial GitHub failure never submits an empty replacement', async () => {
   assert.equal(posted, false);
 });
 
-test('tokens remain on their respective origins and outgoing payload is metadata-only', async () => {
+test('tokens remain on fixed origins and outgoing payload is metadata-only', async () => {
   const sent = [];
   const fetcher = async (url, options) => {
     if (url.host === 'api.github.com') {
@@ -163,12 +163,13 @@ test('tokens remain on their respective origins and outgoing payload is metadata
       assert.equal(options.redirect, 'error');
       return reply({status: 'identical', commits: []});
     }
+    assert.equal(url.origin, 'https://api.foothill.sh');
     assert.equal(options.headers.Authorization, 'Bearer arch-secret');
     if (options.method === 'GET') return reply(state);
     sent.push(JSON.parse(options.body));
     return reply({status: 'accepted', report_id: 'accepted'});
   };
-  await run(inputs, {}, env, fetcher);
+  await run({...inputs, 'api-url': 'https://evil.example'}, {}, env, fetcher);
   assert.equal(sent[0].header.revision, b);
   assert.doesNotMatch(JSON.stringify(sent), /github-secret|arch-secret|source|diff/);
   await assert.rejects(createClient('https://api.github.com', 'token')('https://evil.example/'), /Cross-origin/);
@@ -213,7 +214,7 @@ test('preview reports the event PR without reading or changing the deployed inve
     return reply({status: 'accepted', goal_run_id: 'run-1', app_url: 'https://arch.example/run'});
   });
   assert.equal(receipt.goal_run_id, 'run-1');
-  assert.deepEqual(sent, [['https://arch.example/v1/deployments/preview', {
+  assert.deepEqual(sent, [['https://api.foothill.sh/v1/deployments/preview', {
     repository: 'acme/web', revision: c, url: 'https://pr-12.preview.example', deployment_id: '100:1',
     pr: {number: 12, title: 'Checkout', body: 'Private preview description'},
   }]]);

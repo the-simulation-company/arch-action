@@ -201,7 +201,6 @@ export async function collect(github, repository, state, deployment) {
       }
     }
   }
-  const direct = [];
   if (!state.revision && deployment.mode !== 'refresh') {
     commits = [{sha: deployment.revision}];
   }
@@ -209,7 +208,6 @@ export async function collect(github, repository, state, deployment) {
     for (const commit of commits) {
       const associated = (await pages(github, `${repo}/commits/${commit.sha}/pulls`))
         .filter(pr => pr.merged_at && inRepository(pr, repository));
-      let matched = false;
       for (const pr of associated) {
         let included = inventory.has(pr.number);
         if (!replace) {
@@ -218,23 +216,17 @@ export async function collect(github, repository, state, deployment) {
         }
         if (included) {
           inventory.set(pr.number, member(pr, true));
-          matched = true;
         }
-      }
-      if (!matched) {
-        const detail = commit.commit ? commit : await github(`${repo}/commits/${commit.sha}`);
-        direct.push({revision: commit.sha, message: (detail.commit?.message || '').slice(0, 20000)});
       }
     }
   }
   if (!state.revision && ![...inventory.values()].some(pr => pr.body !== null)) {
     historical = true;
-    direct.length = 0;
   }
   return {
     inventory: replace ? 'replace' : 'delta', historical,
     prs: [...inventory.values()].sort((a, b) => a.number - b.number),
-    removed: [], commits: direct,
+    removed: [], commits: [],
   };
 }
 

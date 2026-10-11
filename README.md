@@ -65,7 +65,7 @@ even for the same commit. Do not change completion time on an HTTP retry.
 
 - Deployment identity, deployed commit, completion order and accepted-report cursor.
 - Included PR numbers and merged revisions, original deployment-coordination sections.
-- Titles and descriptions for newly shipped changes; bounded direct-commit messages.
+- Titles and descriptions for newly shipped PRs.
 
 GitHub credentials, files, diffs and raw API responses are not sent. This Action
 does access repository APIs inside your runner. Using `@latest` means trusting
@@ -81,6 +81,9 @@ accepted SHA, then submits bounded batches to `POST /v1/deployments`. Forward
 history uses commit ancestry and PR associations, never merge timestamps alone.
 It also scans merged PRs for merge commits in the deployed range, so every member
 of a merged stack is included even when GitHub associates only its outer PR.
+Only numbered PRs supply QA change context. Unmatched commits, including branch
+merge commits and direct pushes, still advance the recorded deployment but are
+not reported as separate changes to test.
 A later real deployment recovers omitted PRs at already-recorded merge commits
 as historical coordination metadata, without resending their old QA descriptions.
 Initialization and rollback/divergence rebuild the included-PR inventory; initial

@@ -36,7 +36,7 @@ test('foreign PR associations never supply descriptions or membership', async ()
   }, state.repository, state, deployment);
   assert.deepEqual(result.prs, []);
   assert.doesNotMatch(JSON.stringify(result), /Foreign private description|other\/repo/);
-  assert.deepEqual(result.commits, [{revision: b, message: 'Local commit'}]);
+  assert.deepEqual(result.commits, []);
 });
 
 test('provider event filters success/environment and uses event identity/order', () => {
@@ -86,9 +86,9 @@ test('initial head without associated PR selects historical regression', async (
   assert.deepEqual(result.commits, []);
 });
 
-test('forward comparison proves PR ancestry; commit metadata is allowlisted', async () => {
+test('forward comparison reports numbered PRs and omits unmatched commits', async () => {
   const get = async path => {
-    if (path.includes(`/compare/${a}...${b}`)) return {status: 'ahead', commits: [{sha: b}, {sha: c, commit: {message: 'Direct fix'}, files: ['private code']}]};
+    if (path.includes(`/compare/${a}...${b}`)) return {status: 'ahead', commits: [{sha: b}, {sha: c, commit: {message: "Merge commit 'old-branch' into HEAD"}, files: ['private code']}]};
     if (path.includes('/pulls?state=closed')) return [pr(2, b)];
     if (path.includes(`/commits/${b}/pulls`)) return [pr(2, b)];
     if (path.includes(`/commits/${c}/pulls`)) return [];
@@ -98,7 +98,8 @@ test('forward comparison proves PR ancestry; commit metadata is allowlisted', as
   const result = await collect(get, state.repository, state, deployment);
   assert.equal(result.inventory, 'delta');
   assert.equal(result.prs[0].number, 2);
-  assert.deepEqual(result.commits, [{revision: c, message: 'Direct fix'}]);
+  assert.deepEqual(result.commits, []);
+  assert.doesNotMatch(JSON.stringify(result), /Merge commit|private code/);
 });
 
 test('forward deployment includes every stacked PR at a deployed merge commit', async () => {
@@ -135,13 +136,14 @@ test('pagination never silently truncates commit ranges or closed PRs', async ()
   const get = async path => {
     calls.push(path);
     if (path.includes('/compare/')) return {status: 'ahead', commits: path.includes('page=2') ? [{sha: c, commit: {message: 'last'}}] : [...commits]};
+    if (path.includes('/pulls?state=closed')) return [pr(2, c)];
     if (path.includes('/pulls')) return [];
     throw Error(path);
   };
   const result = await collect(get, state.repository, state, deployment);
-  assert.equal(result.commits.length, 101);
+  assert.deepEqual(result.prs.map(p => p.number), [2]);
+  assert.deepEqual(result.commits, []);
   assert(calls.some(p => p.includes('page=2')));
-  assert.equal(batches(result).length, 2);
 });
 
 for (const status of ['behind', 'diverged']) test(`${status} rebuilds membership and selects regression`, async () => {

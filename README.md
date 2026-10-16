@@ -108,6 +108,7 @@ participating repository; no cross-repository credential or Arch GitHub App is n
 | `mode` | `deploy` (default), manual `refresh` of already-deployed PR links, or `preview` |
 | `preview-url` | Ready PR preview URL for direct calls; otherwise inferred from deployment statuses |
 | `preview-environment` | GitHub preview deployment environment; defaults to `Preview` |
+| `release-merge` | How PRs reach this environment's branch: `merge` (default, also fast-forward) or `squash` |
 
 The Action emits `app-url`, plus `report-id` for deploy and refresh, then exits after acceptance. It never
 polls QA or waits for linked repositories. An actual redeployment uses a new ID,
@@ -144,6 +145,11 @@ configuration or external-service changes are not represented by a Git tree.
 
 Deploy the Arch backend's `no_code_change` support before publishing this Action
 version to `latest`; older backends reject the new field.
+
+With `release-merge: squash`, an environment that receives another branch through
+squash-merged release PRs (for example dev into staging) also reports the PRs behind
+each deployed release PR's head that this target has not recorded yet. Releases
+squashed without a PR report only their own commit.
 
 Only numbered PRs supply QA change context. Unmatched commits, including branch
 merge commits and direct pushes, still advance the recorded deployment but are

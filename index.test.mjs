@@ -480,3 +480,22 @@ test('redelivery reproduces the original unchanged-code report instead of treati
   assert.equal(sent[0].header.no_code_change, true);
   assert.equal(sent[0].header.expected_report_id, state.report_id);
 });
+
+test('squash releases report the PRs behind the release PR head, once', async () => {
+  const dev = 'd'.repeat(40), e = 'e'.repeat(40), f = 'f'.repeat(40), old = '0'.repeat(40);
+  const release = {...pr(9, b, 'Release dev'), head: {sha: dev}};
+  const get = async path => {
+    if (path.includes(`/compare/${a}...${b}`)) return comparison([{sha: b}]);
+    if (path.includes(`/compare/${a}...${dev}`)) return {status: 'diverged', commits: [{sha: e}, {sha: f}, {sha: old}]};
+    if (path.includes('/pulls?state=closed')) return [release, pr(5, e), pr(6, f), pr(4, old)];
+    if (path.includes(`/commits/${b}/pulls`)) return [release];
+    if (path.includes(`/compare/${b}...${b}`)) return {status: 'identical'};
+    throw Error(path);
+  };
+  const released = {...state, prs: [{number: 4, revision: old}]};
+  const squash = await collect(get, state.repository, released, deployment, 'squash');
+  assert.deepEqual(squash.prs.map(p => [p.number, p.body]),
+    [[5, 'Test checkout'], [6, 'Test checkout'], [9, 'Release dev']]);
+  const merge = await collect(get, state.repository, released, deployment);
+  assert.deepEqual(merge.prs.map(p => p.number), [9]);
+});

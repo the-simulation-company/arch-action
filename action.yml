@@ -23,6 +23,9 @@ inputs:
   preview-environment:
     description: GitHub deployment environment used for automatic PR previews.
     default: Preview
+  release-merge:
+    description: How PRs reach this environment's branch. merge (also fast-forward) reports PRs whose merge commits are deployed. squash also reports the PRs behind each deployed squash-merged release PR's head.
+    default: merge
 outputs:
   report-id:
     description: Accepted deployment report identifier (deploy and refresh modes).

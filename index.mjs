@@ -207,8 +207,13 @@ export async function currentDeployment(arch, reportId) {
   return first;
 }
 
-export async function collect(github, repository, state, deployment) {
+export async function collect(github, repository, state, deployment, releaseMerge = 'merge') {
   const repo = `/repos/${repository}`;
+  const pulls = new Map();
+  const associated = sha => {
+    if (!pulls.has(sha)) pulls.set(sha, pages(github, `${repo}/commits/${sha}/pulls`));
+    return pulls.get(sha);
+  };
   let replace = !state.revision || deployment.mode === 'refresh';
   let historical = false;
   let noCodeChange = false;
@@ -272,10 +277,25 @@ export async function collect(github, repository, state, deployment) {
     const added = new Set(commits.map(commit => commit.sha));
     const recorded = new Set(state.prs.map(pr => pr.number));
     const previous = new Set([state.revision, ...state.prs.map(pr => pr.revision)]);
+    // A squash release lands as one commit; the PRs it carries are behind its release PR's head.
+    const squashed = new Set();
+    if (releaseMerge === 'squash') {
+      for (const commit of commits) {
+        for (const release of await associated(commit.sha)) {
+          if (!release.merged_at || release.merge_commit_sha !== commit.sha
+              || !inRepository(release, repository) || !shaPattern.test(release.head?.sha || '')) continue;
+          // ponytail: compares from the fork point, so cost grows with source history since it.
+          const source = await pages(github, `${repo}/compare/${state.revision}...${release.head.sha}`, 'commits');
+          for (const sourceCommit of source) squashed.add(sourceCommit.sha);
+        }
+      }
+    }
     // A commit's associated-PR endpoint can omit inner PRs in a merged stack.
     for (const pr of await pages(github, `${repo}/pulls?state=closed`)) {
       if (!pr.merged_at || !inRepository(pr, repository)) continue;
       if (added.has(pr.merge_commit_sha)) {
+        inventory.set(pr.number, member(pr, !noCodeChange));
+      } else if (!recorded.has(pr.number) && squashed.has(pr.merge_commit_sha)) {
         inventory.set(pr.number, member(pr, !noCodeChange));
       } else if (!recorded.has(pr.number) && previous.has(pr.merge_commit_sha)) {
         // Recover old omissions without treating their descriptions as new changes.
@@ -288,9 +308,9 @@ export async function collect(github, repository, state, deployment) {
   }
   if (deployment.mode !== 'refresh' && !historical) {
     for (const commit of commits) {
-      const associated = (await pages(github, `${repo}/commits/${commit.sha}/pulls`))
+      const merged = (await associated(commit.sha))
         .filter(pr => pr.merged_at && inRepository(pr, repository));
-      for (const pr of associated) {
+      for (const pr of merged) {
         let included = inventory.has(pr.number);
         if (!replace) {
           const result = await github(`${repo}/compare/${pr.merge_commit_sha}...${deployment.revision}?per_page=1`);
@@ -336,6 +356,9 @@ export async function run(inputs, event, env, fetcher = fetch) {
   const arch = createClient('https://api.foothill.sh', inputs['arch-token'], fetcher);
   const github = createClient('https://api.github.com', inputs['github-token'], fetcher, true);
   if (inputs.mode === 'preview') return reportPreview(arch, github, inputs, event, env);
+  if (!['', 'merge', 'squash'].includes(inputs['release-merge'] || '')) {
+    throw new Error('release-merge must be merge or squash');
+  }
   let state = await currentDeployment(arch);
   if (state.repository.toLowerCase() !== env.GITHUB_REPOSITORY.toLowerCase()) {
     throw new Error('The Arch token belongs to a different repository');
@@ -353,7 +376,7 @@ export async function run(inputs, event, env, fetcher = fetch) {
       : {...state, report_id: null, revision: null, prs: []};
   }
   for (let attempt = 0; attempt < 5; attempt++) {
-  const data = await collect(github, state.repository, state, deployment);
+  const data = await collect(github, state.repository, state, deployment, inputs['release-merge'] || 'merge');
   const parts = batches(data);
   const header = {...deployment, expected_report_id: state.report_id,
     inventory: data.inventory, historical: data.historical, batch_count: parts.length,
@@ -378,7 +401,7 @@ export async function run(inputs, event, env, fetcher = fetch) {
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try {
     const names = ['arch-token', 'github-token', 'deployed-sha', 'deployment-id',
-      'deployed-at', 'deployment-order', 'mode', 'preview-url', 'preview-environment'];
+      'deployed-at', 'deployment-order', 'mode', 'preview-url', 'preview-environment', 'release-merge'];
     const inputs = Object.fromEntries(names.map(name => [name, process.env['INPUT_' + name.toUpperCase()] || '']));
     for (const name of ['arch-token', 'github-token']) {
       if (!inputs[name]) throw new Error(`Missing ${name}`);

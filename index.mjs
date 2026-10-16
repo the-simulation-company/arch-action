@@ -261,7 +261,21 @@ export async function collect(github, repository, state, deployment, releaseMerg
       ? new Map(state.prs.map(p => [p.number, p.revision])) : null;
     const reachable = recorded ? null
       : new Set((await pages(github, `${repo}/commits?sha=${deployment.revision}`)).map(c => c.sha));
-    for (const pr of await pages(github, `${repo}/pulls?state=closed`)) {
+    const closed = await pages(github, `${repo}/pulls?state=closed`);
+    if (reachable && releaseMerge === 'squash') {
+      // Squashed releases keep only their own merge commit; add the history behind the latest one.
+      // ponytail: expands only the newest squash-merged PR's head; an older source outside its
+      // history is recovered by the next forward release.
+      const latest = closed
+        .filter(pr => pr.merged_at && inRepository(pr, repository) && reachable.has(pr.merge_commit_sha)
+          && shaPattern.test(pr.head?.sha || '') && !reachable.has(pr.head.sha))
+        .sort((x, y) => Date.parse(y.merged_at) - Date.parse(x.merged_at))[0];
+      if (latest) {
+        const source = await pages(github, `${repo}/compare/${deployment.revision}...${latest.head.sha}`, 'commits');
+        for (const commit of source) reachable.add(commit.sha);
+      }
+    }
+    for (const pr of closed) {
       if (pr.merged_at && inRepository(pr, repository)
           && (recorded ? recorded.has(pr.number) : reachable.has(pr.merge_commit_sha))) {
         if (recorded && recorded.get(pr.number) !== pr.merge_commit_sha) {

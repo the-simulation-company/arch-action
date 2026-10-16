@@ -499,3 +499,25 @@ test('squash releases report the PRs behind the release PR head, once', async ()
   const merge = await collect(get, state.repository, released, deployment);
   assert.deepEqual(merge.prs.map(p => p.number), [9]);
 });
+
+test('squash rebuilds on initialization and rollback keep source PRs as history', async () => {
+  const dev = 'd'.repeat(40), e = 'e'.repeat(40);
+  const release = {...pr(9, b, 'Release dev'), head: {sha: dev}};
+  const get = async path => {
+    if (path.includes(`/compare/${a}...${b}`)) return {status: 'behind'};
+    if (path.includes(`/commits?sha=${b}`)) return [{sha: b}, {sha: a}];
+    if (path.includes(`/compare/${b}...${dev}`)) return {status: 'diverged', commits: [{sha: e}]};
+    if (path.includes('/pulls?state=closed')) return [release, pr(5, e)];
+    if (path.includes(`/commits/${b}/pulls`)) return [release];
+    throw Error(path);
+  };
+  for (const base of [{...state, revision: null}, state]) {
+    const squash = await collect(get, state.repository, base, deployment, 'squash');
+    assert.equal(squash.inventory, 'replace');
+    // Source PRs are history, never new QA context.
+    assert.deepEqual(squash.prs.map(p => p.number), [5, 9]);
+    assert.equal(squash.prs[0].body, null);
+    const merge = await collect(get, state.repository, base, deployment);
+    assert.deepEqual(merge.prs.map(p => p.number), [9]);
+  }
+});

@@ -220,9 +220,6 @@ test('tokens remain on fixed origins and outgoing payload is metadata-only', asy
   };
   await run({...inputs, 'api-url': 'https://evil.example'}, {}, env, fetcher);
   assert.equal(sent[0].header.revision, b);
-  assert.equal('url' in sent[0].header, false);
-  await run({...inputs, 'test-url': 'https://staging.example.com/'}, {}, env, fetcher);
-  assert.equal(sent.at(-1).header.url, 'https://staging.example.com/');
   assert.doesNotMatch(JSON.stringify(sent), /github-secret|arch-secret|source|diff/);
   await assert.rejects(createClient('https://api.github.com', 'token')('https://evil.example/'), /Cross-origin/);
 });

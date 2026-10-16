@@ -23,6 +23,8 @@ inputs:
   preview-environment:
     description: GitHub deployment environment used for automatic PR previews.
     default: Preview
+  test-url:
+    description: URL Arch should test for this deployment when it differs from the app's default URL (for example staging when the default is dev). Must be one of the app's allowed origins.
   release-merge:
     description: How PRs reach this environment's branch. merge (also fast-forward) reports PRs whose merge commits are deployed. squash also reports the PRs behind each deployed squash-merged release PR's head.
     default: merge

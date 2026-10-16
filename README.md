@@ -108,6 +108,7 @@ participating repository; no cross-repository credential or Arch GitHub App is n
 | `mode` | `deploy` (default), manual `refresh` of already-deployed PR links, or `preview` |
 | `preview-url` | Ready PR preview URL for direct calls; otherwise inferred from deployment statuses |
 | `preview-environment` | GitHub preview deployment environment; defaults to `Preview` |
+| `test-url` | URL Arch tests for this deployment when it isn't the app's default URL; must be an allowed origin |
 | `release-merge` | How PRs reach this environment's branch: `merge` (default, also fast-forward) or `squash` |
 
 The Action emits `app-url`, plus `report-id` for deploy and refresh, then exits after acceptance. It never

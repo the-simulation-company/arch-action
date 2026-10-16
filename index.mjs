@@ -370,6 +370,9 @@ export async function run(inputs, event, env, fetcher = fetch) {
   const arch = createClient('https://api.foothill.sh', inputs['arch-token'], fetcher);
   const github = createClient('https://api.github.com', inputs['github-token'], fetcher, true);
   if (inputs.mode === 'preview') return reportPreview(arch, github, inputs, event, env);
+  if (inputs['test-url'] && !/^https?:\/\/[^/?#\s]+(?:\/[^\s]*)?$/.test(inputs['test-url'])) {
+    throw new Error('test-url must be an http(s) URL');
+  }
   if (!['', 'merge', 'squash'].includes(inputs['release-merge'] || '')) {
     throw new Error('release-merge must be merge or squash');
   }
@@ -394,7 +397,8 @@ export async function run(inputs, event, env, fetcher = fetch) {
   const parts = batches(data);
   const header = {...deployment, expected_report_id: state.report_id,
     inventory: data.inventory, historical: data.historical, batch_count: parts.length,
-    ...(data.no_code_change ? {no_code_change: true} : {})};
+    ...(data.no_code_change ? {no_code_change: true} : {}),
+    ...(inputs['test-url'] && deployment.mode === 'deploy' ? {url: inputs['test-url']} : {})};
   let receipt;
   try {
   for (let batch = 0; batch < parts.length; batch++) {
@@ -415,7 +419,7 @@ export async function run(inputs, event, env, fetcher = fetch) {
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try {
     const names = ['arch-token', 'github-token', 'deployed-sha', 'deployment-id',
-      'deployed-at', 'deployment-order', 'mode', 'preview-url', 'preview-environment', 'release-merge'];
+      'deployed-at', 'deployment-order', 'mode', 'preview-url', 'preview-environment', 'release-merge', 'test-url'];
     const inputs = Object.fromEntries(names.map(name => [name, process.env['INPUT_' + name.toUpperCase()] || '']));
     for (const name of ['arch-token', 'github-token']) {
       if (!inputs[name]) throw new Error(`Missing ${name}`);

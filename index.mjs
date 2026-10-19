@@ -126,7 +126,13 @@ async function reportPreview(arch, github, inputs, event, env) {
   });
 }
 
-function member(pr, withBody) {
+function member(pr, withBody, environment) {
+  // Release synchronization advances membership without repeating staging QA.
+  if (environment?.toLowerCase() === 'staging' && pr.base?.ref === 'main' && pr.head?.ref === 'staging'
+      && pr.head.repo?.full_name
+      && pr.head.repo.full_name.toLowerCase() === pr.base.repo?.full_name?.toLowerCase()) {
+    withBody = false;
+  }
   return {
     number: pr.number, revision: pr.merge_commit_sha,
     coordination: coordination(pr.body || ''),
@@ -281,7 +287,7 @@ export async function collect(github, repository, state, deployment, releaseMerg
         if (recorded && recorded.get(pr.number) !== pr.merge_commit_sha) {
           throw new Error('Metadata refresh cannot change a recorded PR revision');
         }
-        inventory.set(pr.number, member(pr, false));
+        inventory.set(pr.number, member(pr, false, state.environment));
       }
     }
     if (recorded && inventory.size !== recorded.size) {
@@ -308,12 +314,12 @@ export async function collect(github, repository, state, deployment, releaseMerg
     for (const pr of await pages(github, `${repo}/pulls?state=closed`)) {
       if (!pr.merged_at || !inRepository(pr, repository)) continue;
       if (added.has(pr.merge_commit_sha)) {
-        inventory.set(pr.number, member(pr, !noCodeChange));
+        inventory.set(pr.number, member(pr, !noCodeChange, state.environment));
       } else if (!recorded.has(pr.number) && squashed.has(pr.merge_commit_sha)) {
-        inventory.set(pr.number, member(pr, !noCodeChange));
+        inventory.set(pr.number, member(pr, !noCodeChange, state.environment));
       } else if (!recorded.has(pr.number) && previous.has(pr.merge_commit_sha)) {
         // Recover old omissions without treating their descriptions as new changes.
-        inventory.set(pr.number, member(pr, false));
+        inventory.set(pr.number, member(pr, false, state.environment));
       }
     }
   }
@@ -331,7 +337,7 @@ export async function collect(github, repository, state, deployment, releaseMerg
           included = ['ahead', 'identical'].includes(result.status);
         }
         if (included) {
-          inventory.set(pr.number, member(pr, !noCodeChange));
+          inventory.set(pr.number, member(pr, !noCodeChange, state.environment));
         }
       }
     }

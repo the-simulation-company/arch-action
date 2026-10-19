@@ -108,6 +108,29 @@ test('forward comparison reports numbered PRs and omits unmatched commits', asyn
   assert.doesNotMatch(JSON.stringify(result), /Merge commit|private code/);
 });
 
+for (const environment of ['staging', 'Staging', 'production']) test(`release synchronization in ${environment} preserves membership and filters only staging release QA`, async () => {
+  const release = {...pr(876, b, 'Release stable issue IDs'),
+    base: {...pr(876, b).base, ref: 'main'}, head: {ref: 'staging', repo: {full_name: 'ACME/web'}}};
+  const feature = {...pr(386, b), base: {...pr(386, b).base, ref: 'staging'}, head: {ref: 'feature'}};
+  const hotfix = {...pr(877, b), base: {...pr(877, b).base, ref: 'main'}, head: {ref: 'hotfix'},
+    labels: [{name: 'production-now'}]};
+  const fork = {...release, number: 878, body: 'Test checkout', head: {ref: 'staging', repo: {full_name: 'alice/web'}}};
+  const unknownHead = {...release, number: 879, body: 'Test checkout', head: {ref: 'staging', repo: null}};
+  for (const prs of [[release], [release, feature, hotfix, fork, unknownHead]]) {
+    const result = await collect(async path => {
+      if (path.includes(`/compare/${a}...${b}`)) return comparison([{sha: b}]);
+      if (path.includes('/pulls?state=closed') || path.includes(`/commits/${b}/pulls`)) return prs;
+      if (path.includes(`/compare/${b}...${b}`)) return {status: 'identical'};
+      throw Error(path);
+    }, state.repository, {...state, environment}, deployment);
+    assert.equal(result.historical, false);
+    assert.equal(result.prs.length, prs.length);
+    assert.equal(result.prs.find(p => p.number === 876).body,
+      environment.toLowerCase() === 'staging' ? null : release.body);
+    for (const other of result.prs.filter(p => p.number !== 876)) assert.equal(other.body, 'Test checkout');
+  }
+});
+
 test('forward deployment includes every stacked PR at a deployed merge commit', async () => {
   const get = async path => {
     if (path.includes(`/compare/${a}...${b}`)) return comparison([{sha: b}]);

@@ -164,6 +164,10 @@ Arch atomically accepts complete reports, handles duplicate HTTP requests and
 delayed events, and rejects conflicting identity reuse. Stale inventory bases are
 refreshed and recomputed. `@arch skip qa` is evaluated by Arch after recording the
 deployment, so a skipped PR can satisfy another repository's dependency.
+For staging targets (case-insensitive), same-repository staging-to-main release PRs are automatically reported as
+metadata only, preserving membership and coordination without repeating QA.
+Ordinary staging PRs and production hotfixes still supply QA context; no manual
+skip directive is required on release PRs.
 
 An admin-provided manual `workflow_dispatch` template with `mode: refresh` rereads
 coordination metadata for the current deployed commit. It does not create new QA

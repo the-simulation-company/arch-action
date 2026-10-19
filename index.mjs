@@ -128,7 +128,9 @@ async function reportPreview(arch, github, inputs, event, env) {
 
 function member(pr, withBody, environment) {
   // Release synchronization advances membership without repeating staging QA.
-  if (environment === 'staging' && pr.base?.ref === 'main' && pr.head?.ref === 'staging') {
+  if (environment?.toLowerCase() === 'staging' && pr.base?.ref === 'main' && pr.head?.ref === 'staging'
+      && pr.head.repo?.full_name
+      && pr.head.repo.full_name.toLowerCase() === pr.base.repo?.full_name?.toLowerCase()) {
     withBody = false;
   }
   return {

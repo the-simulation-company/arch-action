@@ -33,6 +33,12 @@ and `deployed-at` to the UTC completion time captured immediately after readines
 `deployment-order` defaults to the workflow run number and breaks timestamp ties.
 Serialize the entire environment deployment job with `cancel-in-progress: false`.
 Do not assume `github.sha` identifies a separately selected deployment artifact.
+`deployed-branch` optionally supplies that artifact's Git branch for Slack notifications.
+It is inferred from a deployment status's qualified `refs/heads/` ref, or from the
+workflow branch when its SHA matches `deployed-sha`. Bare provider refs can name
+either branches or tags, so they are omitted unless `deployed-branch` is supplied. A separately selected artifact needs an explicit
+`deployed-branch`; otherwise Arch shows just the environment. Deploy Core's branch-report
+support before publishing this Action version, because older Core rejects the new field.
 
 ### Your hosting provider
 

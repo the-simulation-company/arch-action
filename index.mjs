@@ -33,14 +33,20 @@ export function deploymentInput(inputs, event, env, state) {
     if (!state.report_id) throw new Error('Initialize this target with a real deployment first');
     return {
       mode: 'refresh', revision: state.revision, deployed_at: state.deployed_at,
+      ...(state.branch ? {branch: state.branch} : {}),
       order: state.order, deployment_id: `refresh:${env.GITHUB_RUN_ID}:${env.GITHUB_RUN_ATTEMPT}:${state.report_id}`,
     };
   }
+  const ref = inputs['deployed-branch'] || (env.GITHUB_EVENT_NAME === 'deployment_status'
+    ? (event.deployment?.ref?.startsWith('refs/heads/') ? event.deployment.ref : null)
+    : env.GITHUB_REF_TYPE === 'branch' && env.GITHUB_SHA === inputs['deployed-sha']
+      ? env.GITHUB_REF_NAME : null);
+  const branch = ref && !shaPattern.test(ref) ? {branch: ref.replace(/^refs\/heads\//, '')} : {};
   if (env.GITHUB_EVENT_NAME === 'deployment_status') {
     if (event.deployment_status?.state !== 'success') return null;
     if (event.deployment?.environment !== state.environment) return null;
     return {
-      mode: 'deploy', revision: event.deployment.sha,
+      mode: 'deploy', revision: event.deployment.sha, ...branch,
       deployed_at: event.deployment_status.created_at,
       order: event.deployment_status.id,
       deployment_id: `github:${event.deployment.id}:${event.deployment_status.id}`,
@@ -50,7 +56,7 @@ export function deploymentInput(inputs, event, env, state) {
     throw new Error('Pass deployed-sha, deployment-id and deployed-at from the completed deployment');
   }
   return {
-    mode: 'deploy', revision: inputs['deployed-sha'],
+    mode: 'deploy', revision: inputs['deployed-sha'], ...branch,
     deployment_id: inputs['deployment-id'], deployed_at: inputs['deployed-at'],
     order: Number(inputs['deployment-order'] || env.GITHUB_RUN_NUMBER),
   };
@@ -383,7 +389,7 @@ export async function run(inputs, event, env, fetcher = fetch) {
   if (state.repository.toLowerCase() !== env.GITHUB_REPOSITORY.toLowerCase()) {
     throw new Error('The Arch token belongs to a different repository');
   }
-  const deployment = deploymentInput(inputs, event, env, state);
+  let deployment = deploymentInput(inputs, event, env, state);
   if (!deployment) return null;
   if (!shaPattern.test(deployment.revision) || !Number.isSafeInteger(deployment.order)
       || deployment.order < 0 || !Number.isFinite(Date.parse(deployment.deployed_at))
@@ -392,6 +398,8 @@ export async function run(inputs, event, env, fetcher = fetch) {
   }
   // A rerun for the current deployment must reproduce its original report base.
   if (state.deployment_id === deployment.deployment_id) {
+    if (state.branch) deployment.branch = state.branch;
+    else delete deployment.branch;
     state = state.expected_report_id ? await currentDeployment(arch, state.expected_report_id)
       : {...state, report_id: null, revision: null, prs: []};
   }
@@ -413,14 +421,14 @@ export async function run(inputs, event, env, fetcher = fetch) {
   } catch (error) {
     if (error.status !== 409 || error.code !== 'stale_inventory' || attempt === 4) throw error;
     state = await currentDeployment(arch);
-    if (deployment.mode === 'refresh') Object.assign(deployment, deploymentInput(inputs, event, env, state));
+    if (deployment.mode === 'refresh') deployment = deploymentInput(inputs, event, env, state);
   }
   }
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try {
-    const names = ['arch-token', 'github-token', 'deployed-sha', 'deployment-id',
+    const names = ['arch-token', 'github-token', 'deployed-sha', 'deployed-branch', 'deployment-id',
       'deployed-at', 'deployment-order', 'mode', 'preview-url', 'preview-environment', 'release-merge'];
     const inputs = Object.fromEntries(names.map(name => [name, process.env['INPUT_' + name.toUpperCase()] || '']));
     for (const name of ['arch-token', 'github-token']) {

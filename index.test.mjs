@@ -241,7 +241,8 @@ test('tokens remain on fixed origins and outgoing payload is metadata-only', asy
     sent.push(JSON.parse(options.body));
     return reply({status: 'accepted', report_id: 'accepted'});
   };
-  await run({...inputs, 'api-url': 'https://evil.example'}, {}, env, fetcher);
+  await run({...inputs, 'deployed-branch': 'staging', 'api-url': 'https://evil.example'}, {}, env, fetcher);
+  assert.equal(sent[0].header.branch, 'staging');
   assert.equal(sent[0].header.revision, b);
   assert.doesNotMatch(JSON.stringify(sent), /github-secret|arch-secret|source|diff/);
   await assert.rejects(createClient('https://api.github.com', 'token')('https://evil.example/'), /Cross-origin/);
@@ -488,7 +489,7 @@ test('unchanged-code decision is recomputed after a concurrent deployment change
 
 test('redelivery reproduces the original unchanged-code report instead of treating it as a redeployment', async () => {
   const sent = [];
-  await run(inputs, {}, env, async (url, options) => {
+  await run({...inputs, 'deployed-branch': 'staging'}, {}, env, async (url, options) => {
     if (url.host === 'api.foothill.sh') {
       if (options.method === 'GET') return reply(url.searchParams.has('report_id') ? state : {
         ...state, report_id: 'accepted', revision: b, deployment_id: deployment.deployment_id, expected_report_id: state.report_id,
@@ -502,6 +503,7 @@ test('redelivery reproduces the original unchanged-code report instead of treati
   });
   assert.equal(sent[0].header.no_code_change, true);
   assert.equal(sent[0].header.expected_report_id, state.report_id);
+  assert.equal(sent[0].header.branch, undefined); // Preserve the pre-upgrade retry hash.
 });
 
 test('squash releases report the PRs behind the release PR head, once', async () => {
@@ -543,4 +545,18 @@ test('squash rebuilds on initialization and rollback keep source PRs as history'
     const merge = await collect(get, state.repository, base, deployment);
     assert.deepEqual(merge.prs.map(p => p.number), [9]);
   }
+});
+
+
+test('deployment branch describes the artifact, not an unrelated workflow ref', () => {
+  const workflow = {...env, GITHUB_REF_TYPE: 'branch', GITHUB_REF_NAME: 'main', GITHUB_SHA: b};
+  assert.equal(deploymentInput(inputs, {}, workflow, state).branch, 'main');
+  assert.equal(deploymentInput(inputs, {}, {...workflow, GITHUB_SHA: a}, state).branch, undefined);
+  assert.equal(deploymentInput({...inputs, 'deployed-branch': 'release'}, {}, workflow, state).branch, 'release');
+  const event = {deployment: {id: 1, sha: c, ref: 'refs/heads/staging', environment: 'staging'},
+    deployment_status: {id: 2, state: 'success', created_at: deployment.deployed_at}};
+  assert.equal(deploymentInput(inputs, event, {...workflow, GITHUB_EVENT_NAME: 'deployment_status'}, state).branch, 'staging');
+  event.deployment.ref = c;
+  assert.equal(deploymentInput(inputs, event, {...workflow, GITHUB_EVENT_NAME: 'deployment_status'}, state).branch, undefined);
+  assert.equal(deploymentInput({...inputs, mode: 'refresh'}, {}, workflow, {...state, branch: 'staging'}).branch, 'staging');
 });

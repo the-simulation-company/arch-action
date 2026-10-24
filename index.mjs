@@ -38,7 +38,7 @@ export function deploymentInput(inputs, event, env, state) {
     };
   }
   const ref = inputs['deployed-branch'] || (env.GITHUB_EVENT_NAME === 'deployment_status'
-    ? event.deployment?.ref
+    ? (event.deployment?.ref?.startsWith('refs/heads/') ? event.deployment.ref : null)
     : env.GITHUB_REF_TYPE === 'branch' && env.GITHUB_SHA === inputs['deployed-sha']
       ? env.GITHUB_REF_NAME : null);
   const branch = ref && !shaPattern.test(ref) ? {branch: ref.replace(/^refs\/heads\//, '')} : {};
@@ -389,7 +389,7 @@ export async function run(inputs, event, env, fetcher = fetch) {
   if (state.repository.toLowerCase() !== env.GITHUB_REPOSITORY.toLowerCase()) {
     throw new Error('The Arch token belongs to a different repository');
   }
-  const deployment = deploymentInput(inputs, event, env, state);
+  let deployment = deploymentInput(inputs, event, env, state);
   if (!deployment) return null;
   if (!shaPattern.test(deployment.revision) || !Number.isSafeInteger(deployment.order)
       || deployment.order < 0 || !Number.isFinite(Date.parse(deployment.deployed_at))
@@ -421,7 +421,7 @@ export async function run(inputs, event, env, fetcher = fetch) {
   } catch (error) {
     if (error.status !== 409 || error.code !== 'stale_inventory' || attempt === 4) throw error;
     state = await currentDeployment(arch);
-    if (deployment.mode === 'refresh') Object.assign(deployment, deploymentInput(inputs, event, env, state));
+    if (deployment.mode === 'refresh') deployment = deploymentInput(inputs, event, env, state);
   }
   }
 }

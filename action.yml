@@ -10,7 +10,7 @@ inputs:
   deployed-sha:
     description: Actual deployed commit. Inferred from deployment_status events, and in preview mode from the current labeled PR's deployment.
   deployed-branch:
-    description: Actual deployed Git branch. Inferred from deployment_status ref, or the workflow branch when its SHA matches deployed-sha.
+    description: Actual deployed Git branch. Inferred from qualified refs/heads/ deployment refs, or the workflow branch when its SHA matches deployed-sha.
   deployment-id:
     description: Stable identity of this deployment, reused for HTTP retries.
   deployed-at:

@@ -556,7 +556,27 @@ test('deployment branch describes the artifact, not an unrelated workflow ref', 
   const event = {deployment: {id: 1, sha: c, ref: 'refs/heads/staging', environment: 'staging'},
     deployment_status: {id: 2, state: 'success', created_at: deployment.deployed_at}};
   assert.equal(deploymentInput(inputs, event, {...workflow, GITHUB_EVENT_NAME: 'deployment_status'}, state).branch, 'staging');
-  event.deployment.ref = c;
-  assert.equal(deploymentInput(inputs, event, {...workflow, GITHUB_EVENT_NAME: 'deployment_status'}, state).branch, undefined);
+  for (const ref of [c, 'refs/tags/v2.0', 'v2.0', 'staging']) {
+    event.deployment.ref = ref;
+    assert.equal(deploymentInput(inputs, event, {...workflow, GITHUB_EVENT_NAME: 'deployment_status'}, state).branch, undefined);
+  }
   assert.equal(deploymentInput({...inputs, mode: 'refresh'}, {}, workflow, {...state, branch: 'staging'}).branch, 'staging');
+});
+
+
+test('stale refresh replaces branch metadata when the current deployment has none', async () => {
+  let gets = 0;
+  const sent = [];
+  const fetcher = async (url, options) => {
+    if (url.host === 'api.github.com') return reply([]);
+    if (options.method === 'GET') return reply(++gets === 1
+      ? {...state, deployed_at: deployment.deployed_at, order: 20, branch: 'staging', report_id: 'old'}
+      : {...state, deployed_at: deployment.deployed_at, order: 21, report_id: 'new'});
+    sent.push(JSON.parse(options.body));
+    return sent.length === 1 ? reply({code: 'stale_inventory'}, 409) : reply({status: 'accepted'});
+  };
+  await run({...inputs, mode: 'refresh'}, {}, env, fetcher);
+  assert.deepEqual(sent.map(p => p.header.expected_report_id), ['old', 'new']);
+  assert.equal(sent[0].header.branch, 'staging');
+  assert.equal('branch' in sent[1].header, false);
 });

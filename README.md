@@ -187,9 +187,9 @@ selection, ancestry, inventories, pagination, stale bases and credential boundar
 
 ## Publishing
 
-After backend compatibility is deployed, publish a stable, versioned GitHub release
-and mark it as the latest release. The `Publish latest` workflow tests that release
-on Node 24, then moves only the `latest` tag to its commit. Drafts and prereleases
+Merging into `main` automatically publishes a stable patch release; required
+backend compatibility must be deployed before merging. The `Publish latest` workflow tests the code
+on Node 24, then advances `latest` to the stable release's commit. Drafts and prereleases
 are not promoted. The workflow can also be dispatched manually to retry promotion
 or initialize the tag. Version tags stay unchanged; do not create a GitHub release
 for the moving `latest` tag itself.

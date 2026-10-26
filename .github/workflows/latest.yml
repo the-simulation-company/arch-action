@@ -1,6 +1,8 @@
 name: Publish latest
 
 on:
+  push:
+    branches: [main]
   release:
     types: [published]
   workflow_dispatch:
@@ -14,10 +16,11 @@ concurrency:
 
 jobs:
   promote:
-    if: github.event_name == 'workflow_dispatch' || !github.event.release.prerelease
+    if: github.event_name != 'release' || !github.event.release.prerelease
     runs-on: ubuntu-latest
     steps:
       - name: Select the latest stable release
+        if: github.event_name != 'push'
         id: release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -26,12 +29,32 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: refs/tags/${{ steps.release.outputs.tag }}
+          # Resolve main when this serialized run starts, so delayed push runs
+          # include newer merges instead of moving latest back to an older SHA.
+          ref: ${{ github.event_name == 'push' && 'refs/heads/main' || format('refs/tags/{0}', steps.release.outputs.tag) }}
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 24
       - run: node --test
+      - name: Publish a stable release for main
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          commit=$(git rev-parse HEAD)
+          tag=$(git tag --points-at HEAD --sort=-version:refname | awk '/^v[0-9]+\.[0-9]+\.[0-9]+$/ {print; exit}')
+          if [ -z "$tag" ]; then
+            previous=$(git tag --sort=-version:refname | awk '/^v[0-9]+\.[0-9]+\.[0-9]+$/ {print; exit}')
+            [[ "$previous" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]
+            tag="v${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.$((BASH_REMATCH[3] + 1))"
+          fi
+          if gh release view "$tag" --json isDraft,isPrerelease > release.json; then
+            jq -e '.isDraft == false and .isPrerelease == false' release.json
+          else
+            gh release create "$tag" --target "$commit" --title "$tag" --generate-notes --latest
+          fi
       - name: Advance the latest tag
         env:
           GH_TOKEN: ${{ github.token }}

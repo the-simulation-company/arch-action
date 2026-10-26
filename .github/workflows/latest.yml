@@ -13,6 +13,7 @@ permissions:
 concurrency:
   group: publish-latest
   cancel-in-progress: false
+  queue: max
 
 jobs:
   promote:
@@ -52,6 +53,7 @@ jobs:
           fi
           if gh release view "$tag" --json isDraft,isPrerelease > release.json; then
             jq -e '.isDraft == false and .isPrerelease == false' release.json
+            gh release edit "$tag" --latest
           else
             gh release create "$tag" --target "$commit" --title "$tag" --generate-notes --latest
           fi

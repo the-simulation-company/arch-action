@@ -171,7 +171,10 @@ export async function pullRequestCommits(github, repository, number) {
     // The PR commit list stops at 250; compare pages reach the newest commits.
     try {
       const pr = await github(`/repos/${repository}/pulls/${number}`);
-      listed = await pages(github, `/repos/${repository}/compare/${pr.base.sha}...${pr.head.sha}`, 'commits');
+      const compared = await pages(github, `/repos/${repository}/compare/${pr.base.sha}...${pr.head.sha}`, 'commits');
+      // The base may already contain some PR commits; keep the listed ones too.
+      const seen = new Set(listed.map(commit => commit.sha));
+      listed = [...listed, ...compared.filter(commit => !seen.has(commit.sha))];
     } catch (error) {
       console.log(`::warning::Newest commits unavailable for PR #${number}: ${error.message}`);
     }

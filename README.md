@@ -115,6 +115,7 @@ participating repository; no cross-repository credential or Arch GitHub App is n
 | `preview-url` | Ready PR preview URL for direct calls; otherwise inferred from deployment statuses |
 | `preview-environment` | GitHub preview deployment environment; defaults to `Preview` |
 | `release-merge` | How PRs reach this environment's branch: `merge` (default, also fast-forward) or `squash` |
+| `commit-messages` | Send each reported PR's commit messages with its description: `true` (default) or `false` |
 
 The Action emits `app-url`, plus `report-id` for deploy and refresh, then exits after acceptance. It never
 polls QA or waits for linked repositories. An actual redeployment uses a new ID,
@@ -125,9 +126,10 @@ even for the same commit. Do not change completion time on an HTTP retry.
 - Deployment identity, deployed commit, completion order and accepted-report cursor.
 - Included PR numbers and merged revisions, original deployment-coordination sections.
 - Titles and descriptions for newly shipped PRs.
-- In preview mode: the open PR's number, title, description, head branch name and author (GitHub login and user ID), the preview commit and its URL.
+- Commit messages of newly shipped PRs (the first and last 50 each, merge commits excluded), unless `commit-messages: false`. PRs from long-lived branches (`main`, `master`, `staging`, `dev`, `develop`, `production` or the default branch) send only their description.
+- In preview mode: the open PR's number, title, description, head branch name and author (GitHub login and user ID), the preview commit and its URL, and the PR's commit messages unless `commit-messages: false`.
 
-GitHub credentials, files, diffs and raw API responses are not sent. This Action
+GitHub credentials, files, diffs, commit authors and raw API responses are not sent. This Action
 does access repository APIs inside your runner. Using `@latest` means trusting
 Arch's future releases, not just the code you reviewed today. Organizations that
 require immutable Action references must approve that policy or retain a commit

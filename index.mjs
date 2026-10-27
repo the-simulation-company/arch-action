@@ -128,6 +128,8 @@ async function reportPreview(arch, github, inputs, event, env) {
       // Arch keys the branch preview by PR and names it after the head ref.
       ...(pr.head?.ref ? {branch: pr.head.ref} : {}),
       ...(pr.user?.login && pr.user?.id ? {author: {login: pr.user.login, id: pr.user.id}} : {}),
+      ...(inputs['commit-messages'] !== 'false' && !release(pr)
+        ? await pullRequestCommits(github, env.GITHUB_REPOSITORY, pr.number) : {}),
     },
   });
 }
@@ -144,6 +146,50 @@ function member(pr, withBody, environment) {
     coordination: coordination(pr.body || ''),
     title: withBody ? pr.title : '', body: withBody ? (pr.body || '') : null,
   };
+}
+
+const releaseBranches = new Set(['main', 'master', 'staging', 'dev', 'develop', 'production']);
+
+// A long-lived branch merge (staging -> main) would list a whole release history.
+export function release(pr) {
+  const head = pr.head?.repo?.full_name;
+  return typeof head === 'string' && head.toLowerCase() === pr.base?.repo?.full_name?.toLowerCase()
+    && (releaseBranches.has(pr.head.ref?.toLowerCase()) || pr.head.ref === pr.base.repo.default_branch);
+}
+
+// The PR's own commits survive squash and rebase merges. Keep the first and last 50.
+export async function pullRequestCommits(github, repository, number) {
+  let listed;
+  try {
+    listed = await pages(github, `/repos/${repository}/pulls/${number}/commits`);
+  } catch (error) {
+    // Commit messages only supplement the PR description.
+    console.log(`::warning::Commit messages unavailable for PR #${number}: ${error.message}`);
+    return {};
+  }
+  if (listed.length >= 250) {
+    // The PR commit list stops at 250; compare pages reach the newest commits.
+    try {
+      const pr = await github(`/repos/${repository}/pulls/${number}`);
+      const compared = await pages(github, `/repos/${repository}/compare/${pr.base.sha}...${pr.head.sha}`, 'commits');
+      // The base may already contain some PR commits; keep the listed ones too.
+      const seen = new Set(listed.map(commit => commit.sha));
+      listed = [...listed, ...compared.filter(commit => !seen.has(commit.sha))];
+    } catch (error) {
+      console.log(`::warning::Newest commits unavailable for PR #${number}: ${error.message}`);
+    }
+  }
+  const commits = listed
+    // Branch synchronization merges carry no PR intent.
+    .filter(commit => (commit.parents?.length ?? 0) <= 1)
+    .map(commit => {
+      const message = commit.commit?.message || '';
+      return {revision: commit.sha,
+        message: message.length > 2000 ? message.slice(0, 2000) + '\n[Message truncated.]' : message};
+    });
+  if (!commits.length) return {};
+  if (commits.length <= 100) return {commits};
+  return {commits: [...commits.slice(0, 50), ...commits.slice(-50)], omitted_commits: commits.length - 100};
 }
 
 function inRepository(pr, repository) {
@@ -219,9 +265,15 @@ export async function currentDeployment(arch, reportId) {
   return first;
 }
 
-export async function collect(github, repository, state, deployment, releaseMerge = 'merge') {
+export async function collect(github, repository, state, deployment, releaseMerge = 'merge',
+    commitMessages = true) {
   const repo = `/repos/${repository}`;
   const pulls = new Map();
+  const sources = new Map();
+  const add = (pr, withBody) => {
+    inventory.set(pr.number, member(pr, withBody, state.environment));
+    sources.set(pr.number, pr);
+  };
   const associated = sha => {
     if (!pulls.has(sha)) pulls.set(sha, pages(github, `${repo}/commits/${sha}/pulls`));
     return pulls.get(sha);
@@ -293,7 +345,7 @@ export async function collect(github, repository, state, deployment, releaseMerg
         if (recorded && recorded.get(pr.number) !== pr.merge_commit_sha) {
           throw new Error('Metadata refresh cannot change a recorded PR revision');
         }
-        inventory.set(pr.number, member(pr, false, state.environment));
+        add(pr, false);
       }
     }
     if (recorded && inventory.size !== recorded.size) {
@@ -320,12 +372,12 @@ export async function collect(github, repository, state, deployment, releaseMerg
     for (const pr of await pages(github, `${repo}/pulls?state=closed`)) {
       if (!pr.merged_at || !inRepository(pr, repository)) continue;
       if (added.has(pr.merge_commit_sha)) {
-        inventory.set(pr.number, member(pr, !noCodeChange, state.environment));
+        add(pr, !noCodeChange);
       } else if (!recorded.has(pr.number) && squashed.has(pr.merge_commit_sha)) {
-        inventory.set(pr.number, member(pr, !noCodeChange, state.environment));
+        add(pr, !noCodeChange);
       } else if (!recorded.has(pr.number) && previous.has(pr.merge_commit_sha)) {
         // Recover old omissions without treating their descriptions as new changes.
-        inventory.set(pr.number, member(pr, false, state.environment));
+        add(pr, false);
       }
     }
   }
@@ -343,13 +395,20 @@ export async function collect(github, repository, state, deployment, releaseMerg
           included = ['ahead', 'identical'].includes(result.status);
         }
         if (included) {
-          inventory.set(pr.number, member(pr, !noCodeChange, state.environment));
+          add(pr, !noCodeChange);
         }
       }
     }
   }
   if (!state.revision && ![...inventory.values()].some(pr => pr.body !== null)) {
     historical = true;
+  }
+  if (commitMessages) {
+    for (const item of inventory.values()) {
+      if (item.body !== null && !release(sources.get(item.number))) {
+        Object.assign(item, await pullRequestCommits(github, repository, item.number));
+      }
+    }
   }
   return {
     inventory: replace ? 'replace' : 'delta', historical, no_code_change: noCodeChange,
@@ -381,6 +440,9 @@ export function batches(data) {
 export async function run(inputs, event, env, fetcher = fetch) {
   const arch = createClient('https://api.foothill.sh', inputs['arch-token'], fetcher);
   const github = createClient('https://api.github.com', inputs['github-token'], fetcher, true);
+  if (!['', 'true', 'false'].includes(inputs['commit-messages'] || '')) {
+    throw new Error('commit-messages must be true or false');
+  }
   if (inputs.mode === 'preview') return reportPreview(arch, github, inputs, event, env);
   if (!['', 'merge', 'squash'].includes(inputs['release-merge'] || '')) {
     throw new Error('release-merge must be merge or squash');
@@ -404,7 +466,8 @@ export async function run(inputs, event, env, fetcher = fetch) {
       : {...state, report_id: null, revision: null, prs: []};
   }
   for (let attempt = 0; attempt < 5; attempt++) {
-  const data = await collect(github, state.repository, state, deployment, inputs['release-merge'] || 'merge');
+  const data = await collect(github, state.repository, state, deployment, inputs['release-merge'] || 'merge',
+    inputs['commit-messages'] !== 'false');
   const parts = batches(data);
   const header = {...deployment, expected_report_id: state.report_id,
     inventory: data.inventory, historical: data.historical, batch_count: parts.length,
@@ -429,7 +492,7 @@ export async function run(inputs, event, env, fetcher = fetch) {
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try {
     const names = ['arch-token', 'github-token', 'deployed-sha', 'deployed-branch', 'deployment-id',
-      'deployed-at', 'deployment-order', 'mode', 'preview-url', 'preview-environment', 'release-merge'];
+      'deployed-at', 'deployment-order', 'mode', 'preview-url', 'preview-environment', 'release-merge', 'commit-messages'];
     const inputs = Object.fromEntries(names.map(name => [name, process.env['INPUT_' + name.toUpperCase()] || '']));
     for (const name of ['arch-token', 'github-token']) {
       if (!inputs[name]) throw new Error(`Missing ${name}`);

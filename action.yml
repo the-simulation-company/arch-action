@@ -28,6 +28,9 @@ inputs:
   release-merge:
     description: How PRs reach this environment's branch. merge (also fast-forward) reports PRs whose merge commits are deployed. squash also reports the PRs behind each deployed squash-merged release PR's head.
     default: merge
+  commit-messages:
+    description: Send each reported PR's commit messages (first and last 50) with its description. Skipped for release PRs from long-lived branches such as staging.
+    default: 'true'
 outputs:
   report-id:
     description: Accepted deployment report identifier (deploy and refresh modes).

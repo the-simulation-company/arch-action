@@ -1,13 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {batches, collect, coordination, createClient, currentDeployment, deploymentInput, previewInput, run} from './index.mjs';
+import {batches, collect, coordination, createClient, currentDeployment, deploymentInput, previewInput, pullRequestCommits, run}
+  from './index.mjs';
 
 const a = 'a'.repeat(40), b = 'b'.repeat(40), c = 'c'.repeat(40);
 const state = {report_id: 'previous', revision: a, repository: 'acme/web', environment: 'staging', prs: [], next_after: null};
 const env = {GITHUB_REPOSITORY: 'acme/web', GITHUB_RUN_NUMBER: '20', GITHUB_RUN_ID: '100', GITHUB_RUN_ATTEMPT: '1'};
 const deployment = {mode: 'deploy', revision: b, deployed_at: '2026-10-07T12:00:00Z', order: 20, deployment_id: 'd-20'};
 const inputs = {'arch-token': 'arch-secret', 'github-token': 'github-secret',
-  'deployed-sha': b, 'deployed-at': deployment.deployed_at, 'deployment-id': deployment.deployment_id};
+  'deployed-sha': b, 'deployed-at': deployment.deployed_at, 'deployment-id': deployment.deployment_id,
+  'commit-messages': 'false'};
 const pr = (number, sha, body = 'Test checkout') => ({number, merge_commit_sha: sha, merged_at: '2026-10-01', title: 'Checkout', body,
   base: {repo: {full_name: 'acme/web'}},
   diff_url: 'do-not-send', head: {repo: {source: 'do-not-send'}}, user: {email: 'do-not-send'}});
@@ -284,8 +286,12 @@ test('preview reports the event PR without reading or changing the deployed inve
     head: {sha: c, ref: 'feature/checkout'}, user: {login: 'octo', id: 7}, labels: [{name: 'arch-qa'}]};
   const event = {pull_request: current};
   const receipt = await run({...inputs, mode: 'preview', 'deployed-sha': '', 'deployment-id': '',
-    'preview-url': 'https://pr-12.preview.example'}, event, env, async (url, options) => {
+    'preview-url': 'https://pr-12.preview.example', 'commit-messages': ''}, event, env, async (url, options) => {
     if (url.pathname === '/repos/acme/web/pulls/12') return reply(current);
+    if (url.pathname === '/repos/acme/web/pulls/12/commits') return reply([
+      {sha: a, parents: [{}], commit: {message: 'Add card form'}},
+      {sha: b, parents: [{}, {}], commit: {message: "Merge branch 'staging' into feature/checkout"}},
+    ]);
     sent.push([url.href, options.body && JSON.parse(options.body)]);
     return reply({status: 'accepted', goal_run_id: 'run-1', app_url: 'https://arch.example/run'});
   });
@@ -293,7 +299,8 @@ test('preview reports the event PR without reading or changing the deployed inve
   assert.deepEqual(sent, [['https://api.foothill.sh/v1/deployments/preview', {
     repository: 'acme/web', revision: c, url: 'https://pr-12.preview.example', deployment_id: '100:1',
     pr: {number: 12, title: 'Checkout', body: 'Private preview description',
-      branch: 'feature/checkout', author: {login: 'octo', id: 7}},
+      branch: 'feature/checkout', author: {login: 'octo', id: 7},
+      commits: [{revision: a, message: 'Add card form'}]},
   }]]);
 });
 
@@ -348,7 +355,8 @@ test('labeling a ready preview and deployment success report the same deployment
   const deployment = {id: 12, sha: c, environment: 'Preview', production_environment: false};
   const status = {id: 99, state: 'success', environment_url: 'https://p.example'};
   const reports = [];
-  const previewInputs = {'arch-token': inputs['arch-token'], 'github-token': inputs['github-token'], mode: 'preview'};
+  const previewInputs = {'arch-token': inputs['arch-token'], 'github-token': inputs['github-token'], mode: 'preview',
+    'commit-messages': 'false'};
   const fetcher = async (url, options) => {
     if (url.pathname === `/repos/acme/web/commits/${c}/pulls`) return reply([current]);
     if (url.pathname === '/repos/acme/web/pulls/7') return reply(current);
@@ -391,7 +399,8 @@ test('label before readiness waits; ready previews of new pushes get new identit
   const current = () => ({...pr(7, null), state: 'open', head: {sha: head}, labels: [{name: 'arch-qa'}]});
   const deployment = () => ({id: head === c ? 12 : 13, sha: head, environment: 'Preview'});
   const status = () => ({state: ready ? 'success' : 'in_progress', environment_url: 'https://p.example'});
-  const previewInputs = {'arch-token': inputs['arch-token'], 'github-token': inputs['github-token'], mode: 'preview'};
+  const previewInputs = {'arch-token': inputs['arch-token'], 'github-token': inputs['github-token'], mode: 'preview',
+    'commit-messages': 'false'};
   const fetcher = async (url, options) => {
     if (url.pathname.endsWith('/pulls/7')) return reply(current());
     if (url.pathname.endsWith('/pulls')) return reply([current()]);
@@ -579,4 +588,45 @@ test('stale refresh replaces branch metadata when the current deployment has non
   assert.deepEqual(sent.map(p => p.header.expected_report_id), ['old', 'new']);
   assert.equal(sent[0].header.branch, 'staging');
   assert.equal('branch' in sent[1].header, false);
+});
+
+test('deployed PRs send their own first and last 50 commits, except release PRs', async () => {
+  const history = Array.from({length: 105}, (_, n) =>
+    ({sha: n.toString(16).padStart(40, '0'), parents: [{}], commit: {message: `Step ${n}`}}));
+  const listed = {...pr(2, b), head: {ref: 'feature', repo: {full_name: 'acme/web'}}};
+  const release = {...pr(3, b), head: {ref: 'Dev', repo: {full_name: 'acme/web'}}};
+  const get = async path => {
+    if (path.includes(`/compare/${a}...${b}`)) return comparison([{sha: b}]);
+    if (path.includes('/pulls?state=closed')) return [listed, release];
+    if (path.includes(`/commits/${b}/pulls`)) return [listed, release];
+    if (path.includes(`/compare/${b}...${b}`)) return {status: 'identical'};
+    if (path.startsWith('/repos/acme/web/pulls/2/commits')) {
+      const page = Number(new URL(path, 'https://x').searchParams.get('page'));
+      return history.slice((page - 1) * 100, page * 100);
+    }
+    throw Error(path);
+  };
+  const result = await collect(get, state.repository, state, deployment);
+  const [sent, skipped] = result.prs;
+  assert.equal(sent.commits.length, 100);
+  assert.equal(sent.commits[49].message, 'Step 49');
+  assert.equal(sent.commits[50].message, 'Step 55');
+  assert.equal(sent.omitted_commits, 5);
+  assert.equal(skipped.commits, undefined);
+  const disabled = await collect(get, state.repository, state, deployment, 'merge', false);
+  assert.equal(disabled.prs[0].commits, undefined);
+  assert.deepEqual(await pullRequestCommits(async () => { throw Error('down'); }, 'acme/web', 2), {});
+
+  // The PR commit list stops at 250; the newest commits come from compare pages.
+  const long = Array.from({length: 270}, (_, n) =>
+    ({sha: n.toString(16).padStart(40, '0'), parents: [{}], commit: {message: `Step ${n}`}}));
+  const page = path => Number(new URL(path, 'https://x').searchParams.get('page'));
+  const capped = await pullRequestCommits(async path => {
+    if (path.startsWith('/repos/acme/web/pulls/4/commits')) return long.slice(0, 250).slice((page(path) - 1) * 100, page(path) * 100);
+    if (path === '/repos/acme/web/pulls/4') return {base: {sha: a}, head: {sha: b}};
+    if (path.startsWith(`/repos/acme/web/compare/${a}...${b}`)) return {commits: long.slice((page(path) - 1) * 100, page(path) * 100)};
+    throw Error(path);
+  }, 'acme/web', 4);
+  assert.equal(capped.commits.at(-1).message, 'Step 269');
+  assert.equal(capped.omitted_commits, 170);
 });

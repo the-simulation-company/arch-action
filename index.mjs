@@ -162,6 +162,11 @@ export async function pullRequestCommits(github, repository, number) {
   let listed;
   try {
     listed = await pages(github, `/repos/${repository}/pulls/${number}/commits`);
+    if (listed.length >= 250) {
+      // The PR commit list stops at 250; compare pages reach the newest commits.
+      const pr = await github(`/repos/${repository}/pulls/${number}`);
+      listed = await pages(github, `/repos/${repository}/compare/${pr.base.sha}...${pr.head.sha}`, 'commits');
+    }
   } catch (error) {
     // Commit messages only supplement the PR description.
     console.log(`::warning::Commit messages unavailable for PR #${number}: ${error.message}`);

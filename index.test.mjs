@@ -616,4 +616,17 @@ test('deployed PRs send their own first and last 50 commits, except release PRs'
   const disabled = await collect(get, state.repository, state, deployment, 'merge', false);
   assert.equal(disabled.prs[0].commits, undefined);
   assert.deepEqual(await pullRequestCommits(async () => { throw Error('down'); }, 'acme/web', 2), {});
+
+  // The PR commit list stops at 250; the newest commits come from compare pages.
+  const long = Array.from({length: 270}, (_, n) =>
+    ({sha: n.toString(16).padStart(40, '0'), parents: [{}], commit: {message: `Step ${n}`}}));
+  const page = path => Number(new URL(path, 'https://x').searchParams.get('page'));
+  const capped = await pullRequestCommits(async path => {
+    if (path.startsWith('/repos/acme/web/pulls/4/commits')) return long.slice(0, 250).slice((page(path) - 1) * 100, page(path) * 100);
+    if (path === '/repos/acme/web/pulls/4') return {base: {sha: a}, head: {sha: b}};
+    if (path.startsWith(`/repos/acme/web/compare/${a}...${b}`)) return {commits: long.slice((page(path) - 1) * 100, page(path) * 100)};
+    throw Error(path);
+  }, 'acme/web', 4);
+  assert.equal(capped.commits.at(-1).message, 'Step 269');
+  assert.equal(capped.omitted_commits, 170);
 });

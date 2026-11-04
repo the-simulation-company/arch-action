@@ -127,7 +127,7 @@ async function reportPreview(arch, github, inputs, event, env) {
       number: pr.number, title: pr.title || '', body: pr.body || '',
       // Arch keys the branch preview by PR and names it after the head ref.
       ...(pr.head?.ref ? {branch: pr.head.ref} : {}),
-      ...(pr.user?.login && pr.user?.id ? {author: {login: pr.user.login, id: pr.user.id}} : {}),
+      ...author(pr),
       ...(inputs['commit-messages'] !== 'false' && !release(pr)
         ? await pullRequestCommits(github, env.GITHUB_REPOSITORY, pr.number) : {}),
     },
@@ -145,7 +145,13 @@ function member(pr, withBody, environment) {
     number: pr.number, revision: pr.merge_commit_sha,
     coordination: coordination(pr.body || ''),
     title: withBody ? pr.title : '', body: withBody ? (pr.body || '') : null,
+    ...author(pr),
   };
+}
+
+// Arch mentions linked PR authors on the issues their changes ship with.
+function author(pr) {
+  return pr.user?.login && pr.user?.id ? {author: {login: pr.user.login, id: pr.user.id}} : {};
 }
 
 const releaseBranches = new Set(['main', 'master', 'staging', 'dev', 'develop', 'production']);

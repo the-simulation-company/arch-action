@@ -630,3 +630,20 @@ test('deployed PRs send their own first and last 50 commits, except release PRs'
   assert.equal(capped.commits.at(-1).message, 'Step 269');
   assert.equal(capped.omitted_commits, 170);
 });
+
+test('deployment PRs carry their GitHub author only when GitHub names one', async () => {
+  const authored = {...pr(2, b), user: {login: 'octocat', id: 583231, email: 'do-not-send'}};
+  const anonymous = {...pr(3, b), user: {login: 'ghost'}};
+  const get = async path => {
+    if (path.includes(`/compare/${a}...${b}`)) return comparison([{sha: b}]);
+    if (path.includes('/pulls?state=closed')) return [authored, anonymous];
+    if (path.includes(`/commits/${b}/pulls`)) return [authored, anonymous];
+    if (path.includes(`/compare/${b}...${b}`)) return {status: 'identical'};
+    throw Error(path);
+  };
+  const result = await collect(get, state.repository, state, deployment);
+  const byNumber = Object.fromEntries(result.prs.map(p => [p.number, p]));
+  assert.deepEqual(byNumber[2].author, {login: 'octocat', id: 583231});
+  assert.equal('author' in byNumber[3], false);
+  assert.doesNotMatch(JSON.stringify(result), /do-not-send/);
+});

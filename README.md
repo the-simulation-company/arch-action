@@ -124,7 +124,7 @@ even for the same commit. Do not change completion time on an HTTP retry.
 ## What leaves the runner
 
 - Deployment identity, deployed commit, completion order and accepted-report cursor.
-- Included PR numbers and merged revisions, original deployment-coordination sections.
+- Included PR numbers and merged revisions, original deployment-coordination sections, and each PR's author (GitHub login and user ID) so Arch can mention linked authors on the issues their deployment ships with.
 - Titles and descriptions for newly shipped PRs.
 - Commit messages of newly shipped PRs (the first and last 50 each, merge commits excluded), unless `commit-messages: false`. PRs from long-lived branches (`main`, `master`, `staging`, `dev`, `develop`, `production` or the default branch) send only their description.
 - In preview mode: the open PR's number, title, description, head branch name and author (GitHub login and user ID), the preview commit and its URL, and the PR's commit messages unless `commit-messages: false`.
@@ -153,6 +153,9 @@ configuration or external-service changes are not represented by a Git tree.
 
 Deploy the Arch backend's `no_code_change` support before publishing this Action
 version to `latest`; older backends reject the new field.
+
+Deploy the Arch backend's PR `author` support for deployment reports before publishing
+this Action version to `latest`; older backends reject the new field.
 
 With `release-merge: squash`, an environment that receives another branch through
 squash-merged release PRs (for example dev into staging) also reports the PRs behind

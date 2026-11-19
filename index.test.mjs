@@ -68,9 +68,11 @@ test('provider event filters success/environment and uses event identity/order',
   assert.equal(actual.revision, c);
   assert.equal(actual.order, 99);
   assert.equal(actual.deployment_id, 'github:12:99');
-  assert.equal(deploymentInput(inputs, event, {...env, GITHUB_EVENT_NAME: 'deployment_status'}, {...state, environment: 'production'}), null);
+  const conflicting = {...inputs, 'mobile-build-id': 'input'};
+  event.deployment.payload = {arch_mobile_build_id: 'payload'};
+  assert.equal(deploymentInput(conflicting, event, {...env, GITHUB_EVENT_NAME: 'deployment_status'}, {...state, environment: 'production'}), null);
   event.deployment_status.state = 'failure';
-  assert.equal(deploymentInput(inputs, event, {...env, GITHUB_EVENT_NAME: 'deployment_status'}, state), null);
+  assert.equal(deploymentInput(conflicting, event, {...env, GITHUB_EVENT_NAME: 'deployment_status'}, state), null);
 });
 
 test('coordination retains malformed and duplicate blocks for server parser', () => {

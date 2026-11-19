@@ -46,16 +46,17 @@ export function deploymentInput(inputs, event, env, state) {
       order: state.order, deployment_id: `refresh:${env.GITHUB_RUN_ID}:${env.GITHUB_RUN_ATTEMPT}:${state.report_id}`,
     };
   }
-  const ref = inputs['deployed-branch'] || (env.GITHUB_EVENT_NAME === 'deployment_status'
+  const statusEvent = env.GITHUB_EVENT_NAME === 'deployment_status';
+  if (statusEvent && (event.deployment_status?.state !== 'success'
+      || event.deployment?.environment !== state.environment)) return null;
+  const ref = inputs['deployed-branch'] || (statusEvent
     ? (event.deployment?.ref?.startsWith('refs/heads/') ? event.deployment.ref : null)
     : env.GITHUB_REF_TYPE === 'branch' && env.GITHUB_SHA === inputs['deployed-sha']
       ? env.GITHUB_REF_NAME : null);
   const branch = ref && !shaPattern.test(ref) ? {branch: ref.replace(/^refs\/heads\//, '')} : {};
   const id = buildTarget(inputs, event);
   const build = id ? {mobile_build_id: id} : {};
-  if (env.GITHUB_EVENT_NAME === 'deployment_status') {
-    if (event.deployment_status?.state !== 'success') return null;
-    if (event.deployment?.environment !== state.environment) return null;
+  if (statusEvent) {
     return {
       mode: 'deploy', revision: event.deployment.sha, ...branch, ...build,
       deployed_at: event.deployment_status.created_at,

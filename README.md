@@ -11,8 +11,13 @@ and one target for each repository/environment. They supply a target-scoped toke
 and a workflow using the automatically updated `@latest` Action. You save the token as the
 repository secret `ARCH_DEPLOYMENT_TOKEN` and add that workflow.
 
-The Action always reports to `https://api.foothill.sh`; no API URL configuration is
-needed. Install the latest published release:
+The Action reports to Arch production by default. For an Arch staging token, set
+`arch-environment: staging`. This selects the Arch service, not your deployment environment.
+For Android, upload the APK with its compiled commit SHA, then pass the returned ID
+as `mobile-build-id` after deployment succeeds. A GitHub deployment may instead carry
+`payload.arch_mobile_build_id`. Uploads alone do not request QA.
+
+Install the latest published release:
 
 ```yaml
 uses: the-simulation-company/arch-action@latest

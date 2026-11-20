@@ -4,6 +4,11 @@ inputs:
   arch-token:
     description: Arch admin-issued token for this deployment target.
     required: true
+  arch-environment:
+    description: Arch service receiving the report (production or staging), not the environment your app deployed to.
+    default: production
+  mobile-build-id:
+    description: Android deployment only. Exact private APK build ID returned by Arch for this deployed SHA.
   github-token:
     description: Temporary token used only for GitHub API requests in this runner.
     default: ${{ github.token }}

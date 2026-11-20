@@ -25,6 +25,23 @@ test('direct input uses actual deployed SHA, not workflow SHA', () => {
   assert.throws(() => deploymentInput({...inputs, mode: 'refesh'}, {}, env, state), /Mode must be/);
 });
 
+test('Android deploys and PR previews pass a single build, refresh preserves it', async () => {
+  const id = 'fd6e322e-82c9-4dbf-adca-547f46021286';
+  const old = '0d916c8d-4c39-4544-b337-f1420a7f774d';
+  const event = {deployment: {sha: b, payload: {arch_mobile_build_id: id}}};
+  assert.equal(deploymentInput(inputs, event, env, state).mobile_build_id, id);
+  assert.deepEqual(previewInput(inputs, event, env), {revision: b, mobile_build_id: id, deployment_id: 'd-20'});
+  assert.throws(() => deploymentInput({...inputs, 'mobile-build-id': old}, event, env, state), /differs/);
+  assert.equal(deploymentInput({mode: 'refresh'}, {}, env, {...state, mobile_build_id: old}).mobile_build_id, old);
+  const result = await collect(async path => {
+    if (path.includes('/compare/')) return {status: 'identical', commits: []};
+    if (path.includes('/pulls?state=closed')) return [];
+    throw Error(path);
+  }, state.repository, {...state, revision: b, mobile_build_id: old}, {...deployment, mobile_build_id: id});
+  assert.equal(result.historical, true);
+  assert.equal(result.no_code_change, false);
+});
+
 test('timezone-free completion fails before GitHub reads or reporting', async () => {
   let calls = 0;
   await assert.rejects(run({...inputs, 'deployed-at': '2026-10-07T12:00:00'}, {}, env,
@@ -51,9 +68,11 @@ test('provider event filters success/environment and uses event identity/order',
   assert.equal(actual.revision, c);
   assert.equal(actual.order, 99);
   assert.equal(actual.deployment_id, 'github:12:99');
-  assert.equal(deploymentInput(inputs, event, {...env, GITHUB_EVENT_NAME: 'deployment_status'}, {...state, environment: 'production'}), null);
+  const conflicting = {...inputs, 'mobile-build-id': 'input'};
+  event.deployment.payload = {arch_mobile_build_id: 'payload'};
+  assert.equal(deploymentInput(conflicting, event, {...env, GITHUB_EVENT_NAME: 'deployment_status'}, {...state, environment: 'production'}), null);
   event.deployment_status.state = 'failure';
-  assert.equal(deploymentInput(inputs, event, {...env, GITHUB_EVENT_NAME: 'deployment_status'}, state), null);
+  assert.equal(deploymentInput(conflicting, event, {...env, GITHUB_EVENT_NAME: 'deployment_status'}, state), null);
 });
 
 test('coordination retains malformed and duplicate blocks for server parser', () => {

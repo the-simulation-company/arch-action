@@ -25,6 +25,14 @@ export function coordination(body = '') {
   return sections.join('\n');
 }
 
+function buildTarget(inputs, event) {
+  const payload = event.deployment?.payload?.arch_mobile_build_id;
+  if (inputs['mobile-build-id'] && payload && payload !== inputs['mobile-build-id']) {
+    throw new Error('The supplied build ID differs from the GitHub deployment payload');
+  }
+  return inputs['mobile-build-id'] || payload;
+}
+
 export function deploymentInput(inputs, event, env, state) {
   if (inputs.mode && !['deploy', 'refresh'].includes(inputs.mode)) {
     throw new Error('Mode must be deploy, refresh or preview');
@@ -33,20 +41,24 @@ export function deploymentInput(inputs, event, env, state) {
     if (!state.report_id) throw new Error('Initialize this target with a real deployment first');
     return {
       mode: 'refresh', revision: state.revision, deployed_at: state.deployed_at,
+      ...(state.mobile_build_id ? {mobile_build_id: state.mobile_build_id} : {}),
       ...(state.branch ? {branch: state.branch} : {}),
       order: state.order, deployment_id: `refresh:${env.GITHUB_RUN_ID}:${env.GITHUB_RUN_ATTEMPT}:${state.report_id}`,
     };
   }
-  const ref = inputs['deployed-branch'] || (env.GITHUB_EVENT_NAME === 'deployment_status'
+  const statusEvent = env.GITHUB_EVENT_NAME === 'deployment_status';
+  if (statusEvent && (event.deployment_status?.state !== 'success'
+      || event.deployment?.environment !== state.environment)) return null;
+  const ref = inputs['deployed-branch'] || (statusEvent
     ? (event.deployment?.ref?.startsWith('refs/heads/') ? event.deployment.ref : null)
     : env.GITHUB_REF_TYPE === 'branch' && env.GITHUB_SHA === inputs['deployed-sha']
       ? env.GITHUB_REF_NAME : null);
   const branch = ref && !shaPattern.test(ref) ? {branch: ref.replace(/^refs\/heads\//, '')} : {};
-  if (env.GITHUB_EVENT_NAME === 'deployment_status') {
-    if (event.deployment_status?.state !== 'success') return null;
-    if (event.deployment?.environment !== state.environment) return null;
+  const id = buildTarget(inputs, event);
+  const build = id ? {mobile_build_id: id} : {};
+  if (statusEvent) {
     return {
-      mode: 'deploy', revision: event.deployment.sha, ...branch,
+      mode: 'deploy', revision: event.deployment.sha, ...branch, ...build,
       deployed_at: event.deployment_status.created_at,
       order: event.deployment_status.id,
       deployment_id: `github:${event.deployment.id}:${event.deployment_status.id}`,
@@ -56,7 +68,7 @@ export function deploymentInput(inputs, event, env, state) {
     throw new Error('Pass deployed-sha, deployment-id and deployed-at from the completed deployment');
   }
   return {
-    mode: 'deploy', revision: inputs['deployed-sha'], ...branch,
+    mode: 'deploy', revision: inputs['deployed-sha'], ...branch, ...build,
     deployment_id: inputs['deployment-id'], deployed_at: inputs['deployed-at'],
     order: Number(inputs['deployment-order'] || env.GITHUB_RUN_NUMBER),
   };
@@ -65,8 +77,10 @@ export function deploymentInput(inputs, event, env, state) {
 export function previewInput(inputs, event, env) {
   const revision = event.deployment?.sha || inputs['deployed-sha'] || event.pull_request?.head?.sha;
   const url = event.deployment_status?.environment_url || inputs['preview-url'];
-  if (!revision || !url) {
-    throw new Error('Pass deployed-sha and preview-url for the ready preview');
+  const build = buildTarget(inputs, event);
+  if (build && inputs['preview-url']) throw new Error('Pass a build ID or preview URL, not both');
+  if (!revision || (!url && !build)) {
+    throw new Error('Pass deployed-sha and preview-url or mobile-build-id for the ready preview');
   }
   if (!shaPattern.test(revision)) throw new Error('Invalid preview commit');
   let deploymentId = event.deployment?.id ? `github:${event.deployment.id}` : inputs['deployment-id'];
@@ -75,7 +89,7 @@ export function previewInput(inputs, event, env) {
     deploymentId += `:retry:${env.GITHUB_RUN_ID}:${env.GITHUB_RUN_ATTEMPT}`;
   }
   return {
-    revision, url,
+    revision, ...(build ? {mobile_build_id: build} : {url}),
     deployment_id: deploymentId || `${env.GITHUB_RUN_ID}:${env.GITHUB_RUN_ATTEMPT}`,
   };
 }
@@ -109,7 +123,7 @@ async function reportPreview(arch, github, inputs, event, env) {
   const revision = event.deployment?.sha || inputs['deployed-sha'] || event.pull_request?.head?.sha;
   const pr = await previewPR(github, env.GITHUB_REPOSITORY, revision, event);
   if (!pr) return null;
-  if (!inputs['preview-url'] && !event.deployment_status) {
+  if (!inputs['preview-url'] && !inputs['mobile-build-id'] && !event.deployment_status) {
     const deployments = await pages(github, `/repos/${env.GITHUB_REPOSITORY}/deployments`
       + `?sha=${pr.head.sha}&environment=${encodeURIComponent(environment)}`);
     const deployment = deployments.find(item => item.sha === pr.head.sha
@@ -320,8 +334,10 @@ export async function collect(github, repository, state, deployment, releaseMerg
           if (base?.sha !== state.revision || !shaPattern.test(baseTree || '') || !shaPattern.test(headTree || '')) {
             throw new Error('Incomplete commit tree response');
           }
-          noCodeChange = baseTree === headTree;
+          noCodeChange = baseTree === headTree && deployment.mobile_build_id === (state.mobile_build_id || undefined);
         }
+        if (deployment.mobile_build_id && deployment.mobile_build_id !== state.mobile_build_id
+            && comparison.status === 'identical') historical = true;
       } else throw new Error('Unrecognized comparison status');
     }
   }
@@ -444,7 +460,10 @@ export function batches(data) {
 }
 
 export async function run(inputs, event, env, fetcher = fetch) {
-  const arch = createClient('https://api.foothill.sh', inputs['arch-token'], fetcher);
+  const stack = inputs['arch-environment'] || 'production';
+  if (!['staging', 'production'].includes(stack)) throw new Error('Invalid Arch environment');
+  const arch = createClient(stack === 'staging' ? 'https://api.staging.arch.foothill.sh' : 'https://api.foothill.sh',
+    inputs['arch-token'], fetcher);
   const github = createClient('https://api.github.com', inputs['github-token'], fetcher, true);
   if (!['', 'true', 'false'].includes(inputs['commit-messages'] || '')) {
     throw new Error('commit-messages must be true or false');
@@ -497,7 +516,7 @@ export async function run(inputs, event, env, fetcher = fetch) {
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try {
-    const names = ['arch-token', 'github-token', 'deployed-sha', 'deployed-branch', 'deployment-id',
+    const names = ['arch-token', 'arch-environment', 'github-token', 'mobile-build-id', 'deployed-sha', 'deployed-branch', 'deployment-id',
       'deployed-at', 'deployment-order', 'mode', 'preview-url', 'preview-environment', 'release-merge', 'commit-messages'];
     const inputs = Object.fromEntries(names.map(name => [name, process.env['INPUT_' + name.toUpperCase()] || '']));
     for (const name of ['arch-token', 'github-token']) {
